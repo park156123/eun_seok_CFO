@@ -5,6 +5,7 @@ import {
   Asset,
   OnboardingDebt,
   Debt,
+  MonthlyLoanPayment,
   IncomeSource,
   IncomeRecord,
   FixedExpenseItem,
@@ -19,6 +20,7 @@ import {
   MerchantRule,
   CategoryRule,
   ExclusionRule,
+  ActiveCsvSession,
 } from '../types';
 
 import {
@@ -40,6 +42,11 @@ import {
 } from '../data/ruleLoader';
 import { calculateCurrentDebtPayment } from '../utils/debtCalculator';
 import { normalizeIncomeSource } from '../utils/incomeUtils';
+
+import {
+  normalizeMerchantName,
+  reclassifyTransactions,
+} from '../utils/transactionClassifier';
 
 // Storage key for persistent mock data in browser session/local storage
 const LOCAL_STORAGE_KEY = 'cfo_global_mock_datastore_v1';
@@ -373,6 +380,7 @@ class GlobalMockDataStoreImpl implements IDataStore {
 
   private saveToStorage(): void {
     try {
+      this.syncAutoPlannerSchedules();
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(this.data));
     } catch (e) {
       console.error('Failed to save to localStorage:', e);
@@ -832,6 +840,66 @@ class GlobalMockDataStoreImpl implements IDataStore {
     this.saveToStorage();
   }
 
+  public async setSessionTransactions(txs: Transaction[]): Promise<void> {
+    this.startNewCsvSession({
+      fileName: 'CSV_거래내역.csv',
+      transactions: txs,
+    });
+  }
+
+  public async saveUserMerchantLearning(
+    merchantRaw: string,
+    merchantMaster: string,
+    majorCategory: string,
+    minorCategory: string
+  ): Promise<void> {
+    const raw = (merchantRaw || '').trim();
+    const master = (merchantMaster || raw).trim();
+    if (!raw) return;
+
+    const normRaw = normalizeMerchantName(raw);
+    const normMaster = normalizeMerchantName(master);
+
+    const userRule: MerchantRule = {
+      id: `m-rule-user-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      merchantMaster: master,
+      patterns: Array.from(new Set([raw, master, normRaw, normMaster].filter(Boolean))),
+      matchType: 'contains',
+      majorCategory,
+      minorCategory,
+      included: true,
+      confidence: 'confirmed',
+      source: 'user-confirmed',
+      isActive: true,
+    };
+
+    await this.saveMerchantRule(userRule);
+
+    // Reclassify active session transactions using updated rules
+    if (this.data.otherSettings.transactions.length > 0) {
+      const reclassified = reclassifyTransactions(this.data.otherSettings.transactions, {
+        rules: this.getMerchantRules(),
+        exclusionRules: this.getExclusionRules(),
+        categoryRules: this.getCategoryRules(),
+      });
+
+      const updatedTxList = reclassified.map((item, idx) => {
+        const orig = this.data.otherSettings.transactions[idx];
+        return {
+          ...orig,
+          merchant: item.merchant,
+          category: item.category,
+          needsReview: item.needsReview,
+          userConfirmed: item.userConfirmed ?? orig.userConfirmed,
+          classification: item.classification,
+        };
+      });
+
+      this.data.otherSettings.transactions = updatedTxList;
+      this.saveToStorage();
+    }
+  }
+
   public async addTransaction(tx: Transaction): Promise<void> {
     this.data.otherSettings.transactions.unshift(tx);
     this.saveToStorage();
@@ -907,6 +975,598 @@ class GlobalMockDataStoreImpl implements IDataStore {
     }
     this.saveToStorage();
   }
+
+  // ============================================================================
+  // SINGLE SOURCE OF TRUTH (SSOT) CALCULATION & AUTO-SYNC HELPERS
+  // ============================================================================
+
+  /**
+   * Auto-synchronizes planner schedule events from registered debts and assets.
+   */
+  public syncAutoPlannerSchedules(): void {
+    const obDebts = this.data.debts.onboardingDebts || [];
+    const mainDebts = this.data.debts.mainDebts || [];
+
+    const activeDebtsMap = new Map<
+      string,
+      { id: string; name: string; repayDate?: string; maturityDate?: string; amount: number; payment: number }
+    >();
+
+    obDebts.forEach((d) => {
+      const repayDate = d.principalRepaymentStartDate || d.repaymentStartDate || d.principalStartDate;
+      activeDebtsMap.set(d.id, {
+        id: d.id,
+        name: d.debtName,
+        repayDate: repayDate ? repayDate.replace(/\./g, '-') : undefined,
+        maturityDate: d.maturityDate ? d.maturityDate.replace(/\./g, '-') : undefined,
+        amount: Number(d.currentBalance) || Number(d.originalPrincipal) || 0,
+        payment: Number(d.monthlyPayment) || 0,
+      });
+    });
+
+    mainDebts.forEach((d) => {
+      if (!activeDebtsMap.has(d.id)) {
+        const repayDate = d.principalRepaymentStartDate || d.repaymentStartDate;
+        activeDebtsMap.set(d.id, {
+          id: d.id,
+          name: d.name.replace(/^\[|\]$/g, ''),
+          repayDate: repayDate ? repayDate.replace(/\./g, '-') : undefined,
+          maturityDate: d.maturityDate ? d.maturityDate.replace(/\./g, '-') : undefined,
+          amount: Number(d.currentBalance) || Number(d.amount) || 0,
+          payment: Number(d.monthlyPayment) || 0,
+        });
+      }
+    });
+
+    const currentSchedules = this.data.otherSettings?.schedules || [];
+    const manualSchedules = currentSchedules.filter((s) => !s.isAutoGenerated);
+
+    const autoSchedules: ScheduleEvent[] = [];
+
+    activeDebtsMap.forEach((debt) => {
+      if (debt.repayDate) {
+        autoSchedules.push({
+          id: `auto-sch-repay-${debt.id}`,
+          title: `${debt.name} 원금상환 시작`,
+          date: debt.repayDate,
+          amount: debt.payment || debt.amount,
+          isPrimary: true,
+          memo: `[자동 생성] ${debt.name} 원금상환 시작 일정`,
+          categoryIcon: 'account_balance',
+          isAutoGenerated: true,
+          sourceType: 'debt',
+          sourceId: debt.id,
+          expectedPayment: debt.payment,
+          remainingPrincipal: debt.amount,
+        });
+      }
+
+      if (debt.maturityDate) {
+        autoSchedules.push({
+          id: `auto-sch-maturity-${debt.id}`,
+          title: `${debt.name} 대출 만기`,
+          date: debt.maturityDate,
+          amount: debt.amount,
+          isPrimary: true,
+          memo: `[자동 생성] ${debt.name} 대출 만기 일정`,
+          categoryIcon: 'event_busy',
+          isAutoGenerated: true,
+          sourceType: 'debt',
+          sourceId: debt.id,
+          expectedPayment: debt.amount,
+          remainingPrincipal: 0,
+        });
+      }
+    });
+
+    this.data.otherSettings.schedules = [...manualSchedules, ...autoSchedules];
+  }
+
+  /**
+   * Unified Income Summary getter for a given year & month.
+   */
+  public getMonthlyIncomeSummary(year: number, month: number) {
+    const sources = this.getIncomeSources().filter((s) => s.isActive !== false);
+    const records = this.getIncomeRecords(year, month);
+
+    let businessIncome = 0;
+    let rentalIncome = 0;
+    let otherIncome = 0;
+
+    const inflowDetails: Array<{ id: string; name: string; type: string; amount: number; isActual: boolean }> = [];
+
+    sources.forEach((src) => {
+      const rec = records.find((r) => r.incomeSourceId === src.id);
+      let amount = 0;
+      let isActual = false;
+
+      if (rec && rec.actualIncome !== undefined && rec.actualIncome !== null) {
+        amount = rec.actualIncome;
+        isActual = true;
+      } else {
+        amount = Number(src.fixedMonthlyIncome) || Number(src.monthlyIncome) || 0;
+      }
+
+      const type = src.incomeType || '사업소득';
+      if (type === '사업소득') {
+        businessIncome += amount;
+      } else if (type === '임대소득') {
+        rentalIncome += amount;
+      } else {
+        otherIncome += amount;
+      }
+
+      inflowDetails.push({
+        id: src.id,
+        name: src.incomeName || src.name || '수입원',
+        type,
+        amount,
+        isActual,
+      });
+    });
+
+    const totalIncome = businessIncome + rentalIncome + otherIncome;
+
+    return {
+      totalIncome,
+      totalInflow: totalIncome,
+      businessIncome,
+      rentalIncome,
+      otherIncome,
+      inflowDetails,
+    };
+  }
+
+  /**
+   * Get Monthly Loan Payments for a given year & month.
+   */
+  public getMonthlyLoanPayments(year: number, month: number): MonthlyLoanPayment[] {
+    const obDebts = this.data.debts.onboardingDebts || [];
+    const storedPayments = this.data.debts.monthlyLoanPayments || [];
+
+    const result: MonthlyLoanPayment[] = [];
+
+    obDebts.forEach((debt) => {
+      const existing = storedPayments.find(
+        (p) => p.debtId === debt.id && p.year === year && p.month === month
+      );
+      if (existing) {
+        result.push(existing);
+      } else {
+        const origPrincipal = Number(debt.originalPrincipal) || Number(debt.currentBalance) || 0;
+        const curBalance = Number(debt.currentBalance) || origPrincipal;
+        const rate = Number(debt.interestRate) || Number(debt.annualRate) || 0;
+        const methodStr = String(debt.repaymentMethod || debt.repaymentType || '원리금균등');
+        const targetDateStr = `${year}-${String(month).padStart(2, '0')}-01`;
+
+        let estPrincipal = 0;
+        let estInterest = Math.round((curBalance * (rate / 100)) / 12);
+
+        const startDateStr =
+          debt.principalRepaymentStartDate || debt.repaymentStartDate || debt.loanStartDate;
+        if (startDateStr && new Date(targetDateStr) < new Date(startDateStr)) {
+          estPrincipal = 0;
+        } else {
+          if (methodStr.includes('만기일시') || methodStr.includes('이자만')) {
+            estPrincipal = 0;
+          } else if (methodStr.includes('원금균등')) {
+            const months = debt.remainingMonths || 120;
+            estPrincipal = Math.round(origPrincipal / months);
+          } else if (methodStr.includes('원리금균등')) {
+            const months = debt.remainingMonths || 120;
+            const r = rate / 100 / 12;
+            if (r > 0 && months > 0) {
+              const totalMonthly =
+                (origPrincipal * r * Math.pow(1 + r, months)) / (Math.pow(1 + r, months) - 1);
+              estInterest = Math.round(curBalance * r);
+              estPrincipal = Math.max(0, Math.round(totalMonthly - estInterest));
+            } else {
+              estPrincipal = Math.round(origPrincipal / (months || 120));
+            }
+          } else {
+            estPrincipal =
+              Number(debt.currentPrincipalPayment) || Number(debt.manualPrincipalPayment) || 0;
+            estInterest =
+              Number(debt.currentInterestPayment) || Number(debt.manualInterestPayment) || estInterest;
+          }
+        }
+
+        result.push({
+          id: `mlp-${debt.id}-${year}-${month}`,
+          debtId: debt.id,
+          debtName: debt.debtName,
+          year,
+          month,
+          paymentDay: debt.paymentDay,
+          estimatedPrincipal: estPrincipal,
+          estimatedInterest: estInterest,
+          estimatedTotal: estPrincipal + estInterest,
+          actualPrincipal: null,
+          actualInterest: null,
+          actualTotal: null,
+          isConfirmed: false,
+          calculatedAt: new Date().toISOString(),
+        });
+      }
+    });
+
+    return result;
+  }
+
+  /**
+   * Confirm or update a Monthly Loan Payment record.
+   */
+  public async saveMonthlyLoanPayment(payment: MonthlyLoanPayment): Promise<void> {
+    if (!this.data.debts.monthlyLoanPayments) {
+      this.data.debts.monthlyLoanPayments = [];
+    }
+
+    const idx = this.data.debts.monthlyLoanPayments.findIndex(
+      (p) => p.debtId === payment.debtId && p.year === payment.year && p.month === payment.month
+    );
+
+    if (idx >= 0) {
+      this.data.debts.monthlyLoanPayments[idx] = payment;
+    } else {
+      this.data.debts.monthlyLoanPayments.push(payment);
+    }
+
+    if (payment.isConfirmed && payment.actualPrincipal !== null && payment.actualPrincipal > 0) {
+      const debtIdx = this.data.debts.onboardingDebts.findIndex((d) => d.id === payment.debtId);
+      if (debtIdx >= 0) {
+        const debt = this.data.debts.onboardingDebts[debtIdx];
+        const orig = Number(debt.originalPrincipal) || Number(debt.currentBalance) || 0;
+
+        const totalConfirmedPrincipal = this.data.debts.monthlyLoanPayments
+          .filter((p) => p.debtId === payment.debtId && p.isConfirmed && p.actualPrincipal !== null)
+          .reduce((sum, p) => sum + (p.actualPrincipal || 0), 0);
+
+        const newBalance = Math.max(0, orig - totalConfirmedPrincipal);
+        this.data.debts.onboardingDebts[debtIdx].currentBalance = newBalance;
+
+        const mainIdx = this.data.debts.mainDebts.findIndex((m) => m.id === payment.debtId);
+        if (mainIdx >= 0) {
+          this.data.debts.mainDebts[mainIdx].amount = newBalance;
+        }
+      }
+    }
+
+    this.saveToStorage();
+  }
+
+  /**
+   * Unified Cashflow Summary formula calculation for a target month.
+   */
+  public getMonthlyCashflowSummary(year: number, month: number) {
+    const incomeSummary = this.getMonthlyIncomeSummary(year, month);
+    const loanPayments = this.getMonthlyLoanPayments(year, month);
+
+    let financialCost = 0;
+    let principalRepayment = 0;
+    let debtReduction = 0;
+
+    loanPayments.forEach((p) => {
+      financialCost += p.actualInterest ?? p.estimatedInterest;
+      principalRepayment += p.actualPrincipal ?? p.estimatedPrincipal;
+      if (p.isConfirmed && p.actualPrincipal) {
+        debtReduction += p.actualPrincipal;
+      }
+    });
+
+    const fixedExps = this.getFixedExpenses();
+    const otherFixed = fixedExps.reduce((sum, f) => sum + (Number(f.monthlyAmount) || 0), 0);
+
+    const consumerSummary = this.getConsumerSpendingSummary();
+    const livingExpenses = consumerSummary.totalExpense;
+
+    const totalOutflow = livingExpenses + financialCost + principalRepayment + otherFixed;
+    const netCashflow = incomeSummary.totalInflow - totalOutflow;
+
+    const outflowDetails = [
+      { id: 'living', name: '생활지출 (카드/현금)', category: '생활비', amount: livingExpenses },
+      { id: 'interest', name: '금융비용 (대출이자)', category: '금융비용', amount: financialCost },
+      { id: 'principal', name: '대출 원금상환액', category: '부채상환', amount: principalRepayment },
+      ...fixedExps.map((f) => ({
+        id: f.id,
+        name: f.name,
+        category: f.category || '고정지출',
+        amount: Number(f.monthlyAmount) || 0,
+      })),
+    ];
+
+    return {
+      totalInflow: incomeSummary.totalInflow,
+      businessIncome: incomeSummary.businessIncome,
+      rentalIncome: incomeSummary.rentalIncome,
+      otherIncome: incomeSummary.otherIncome,
+      inflowDetails: incomeSummary.inflowDetails,
+
+      livingExpenses,
+      financialCost,
+      principalRepayment,
+      otherFixed,
+      totalOutflow,
+      netCashflow,
+      debtReduction,
+      outflowDetails,
+    };
+  }
+
+  // ============================================================================
+  // CSV SESSION MANAGEMENT & SINGLE SOURCE OF TRUTH AGGREGATION
+  // ============================================================================
+
+  public isPersonalOrInternalTransferMerchant(
+    merchantName: string,
+    category?: string,
+    memo?: string
+  ): boolean {
+    if (!merchantName) return true;
+    const name = merchantName.trim();
+    const cat = (category || '').toLowerCase();
+
+    if (
+      cat.includes('제외') ||
+      cat.includes('내부이체') ||
+      cat.includes('원금상환') ||
+      cat.includes('자산이동')
+    ) {
+      return true;
+    }
+
+    const transferKeywords = [
+      '스마트출금', '계좌이체', '타행이체', '당행이체', '무통장', '송금',
+      '대체', '상환', '자동이체', 'ATM', '카카오페이', '토스', '네이버페이',
+      '출금', '입금', '대여금', '현하우스', '수수료', '원금상환', '예적금'
+    ];
+    if (transferKeywords.some((kw) => name.includes(kw) || (memo && memo.includes(kw)))) {
+      return true;
+    }
+
+    const cleanNameNoParens = name.replace(/\(.*?\)/g, '').trim();
+    const pureKorean2To4 = /^[가-힣]{2,4}$/;
+    if (pureKorean2To4.test(cleanNameNoParens)) {
+      const commercialSuffixes = [
+        '점', '국밥', '치킨', '피자', '갈비', '김밥', '본죽', '미용실',
+        '헤어', '의원', '약국', '마트', '슈퍼', '카페', '베이커리', '식당', '반점',
+        '스튜디오', '꽃집', '카센터', '공인중개사', '학원', '클라우드', '서버', 'AWS'
+      ];
+      if (!commercialSuffixes.some((sfx) => name.includes(sfx))) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  public getActiveSessionTransactions(): Transaction[] {
+    const activeSessionId = this.data.otherSettings?.activeImportSessionId;
+    const allTxs = this.data.otherSettings?.transactions || [];
+    if (activeSessionId) {
+      return allTxs.filter((t) => t.importSessionId === activeSessionId);
+    }
+    return allTxs;
+  }
+
+  public getConsumerSpendingSummary(): ConsumerSpendingSummary {
+    const activeSessionInfo = this.data.otherSettings?.activeCsvSession;
+    const activeSessionId = this.data.otherSettings?.activeImportSessionId;
+    const allTxs = this.data.otherSettings?.transactions || [];
+
+    let sessionTxs = allTxs;
+    if (activeSessionId) {
+      sessionTxs = allTxs.filter((t) => t.importSessionId === activeSessionId);
+    }
+
+    const includedTxs = sessionTxs.filter((t) => {
+      if (t.analysisStatus === 'excluded' || t.analysisStatus === 'pending') {
+        return false;
+      }
+      if (t.isIncome) return false;
+      if (t.classification) {
+        if (t.classification.classificationType === 'excluded') return false;
+        if (!t.classification.included) return false;
+        if (t.classification.needsConfirmation && t.needsReview) return false;
+      }
+      const cat = t.category || '';
+      if (cat.startsWith('제외') || cat.includes('내부이체')) return false;
+      return (Number(t.amount) || 0) > 0;
+    });
+
+    const excludedTxs = sessionTxs.filter((t) => {
+      if (t.analysisStatus === 'excluded') return true;
+      if (t.classification?.classificationType === 'excluded') return true;
+      const cat = t.category || '';
+      return cat.startsWith('제외') || cat.includes('내부이체');
+    });
+
+    const pendingTxs = sessionTxs.filter((t) => {
+      if (t.analysisStatus === 'pending') return true;
+      if (t.needsReview || t.classification?.needsConfirmation) return true;
+      return false;
+    });
+
+    const totalExpense = includedTxs.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+
+    // Category Breakdown (EXCLUDING '제외')
+    const categoryMap = new Map<string, { amount: number; count: number }>();
+    includedTxs.forEach((t) => {
+      let cat = t.category || '기타';
+      if (cat.includes('>')) {
+        cat = cat.split('>')[0].trim();
+      }
+      if (cat === '제외' || cat.startsWith('제외')) return;
+      const curr = categoryMap.get(cat) || { amount: 0, count: 0 };
+      categoryMap.set(cat, {
+        amount: curr.amount + (Number(t.amount) || 0),
+        count: curr.count + 1,
+      });
+    });
+
+    const categoryBreakdown: Array<{ category: string; amount: number; count: number; percentage: number }> = [];
+    categoryMap.forEach((val, key) => {
+      const percentage = totalExpense > 0 ? Math.round((val.amount / totalExpense) * 1000) / 10 : 0;
+      categoryBreakdown.push({
+        category: key,
+        amount: val.amount,
+        count: val.count,
+        percentage,
+      });
+    });
+    categoryBreakdown.sort((a, b) => b.amount - a.amount);
+
+    // TOP 5 Merchants
+    const merchantMap = new Map<string, { amount: number; count: number }>();
+    includedTxs.forEach((t) => {
+      const merchant = (t.merchant || '').trim();
+      if (!merchant) return;
+      if (this.isPersonalOrInternalTransferMerchant(merchant, t.category, t.memo)) return;
+
+      const curr = merchantMap.get(merchant) || { amount: 0, count: 0 };
+      merchantMap.set(merchant, {
+        amount: curr.amount + (Number(t.amount) || 0),
+        count: curr.count + 1,
+      });
+    });
+
+    const top5Merchants: Array<{ merchant: string; totalAmount: number; count: number }> = [];
+    merchantMap.forEach((val, key) => {
+      top5Merchants.push({
+        merchant: key,
+        totalAmount: val.amount,
+        count: val.count,
+      });
+    });
+    top5Merchants.sort((a, b) => b.totalAmount - a.totalAmount);
+
+    return {
+      activeSessionInfo,
+      totalExpense,
+      totalCount: includedTxs.length,
+      categoryBreakdown,
+      top5Merchants: top5Merchants.slice(0, 5),
+      excludedSummary: {
+        count: excludedTxs.length,
+        totalAmount: excludedTxs.reduce((sum, t) => sum + (Number(t.amount) || 0), 0),
+      },
+      pendingSummary: {
+        count: pendingTxs.length,
+        totalAmount: pendingTxs.reduce((sum, t) => sum + (Number(t.amount) || 0), 0),
+      },
+      totalSessionRawCount: sessionTxs.length,
+    };
+  }
+
+  public startNewCsvSession(payload: {
+    fileName: string;
+    transactions: Transaction[];
+    dateRange?: string;
+  }): ActiveCsvSession {
+    const importSessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const now = new Date();
+    const importedAt = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, '0')}.${String(
+      now.getDate()
+    ).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(
+      now.getMinutes()
+    ).padStart(2, '0')}`;
+
+    const seenIds = new Set<string>();
+    const processedTxs: Transaction[] = [];
+
+    let includedCount = 0;
+    let excludedCount = 0;
+    let pendingCount = 0;
+
+    payload.transactions.forEach((t, idx) => {
+      const rawMerchant = t.merchantOriginal || t.merchant || '';
+      const dateStr = t.date || '';
+      const amt = Number(t.amount) || 0;
+      const txId = t.transactionId || `${dateStr}_${t.time || ''}_${amt}_${rawMerchant}_${idx}`;
+
+      if (seenIds.has(txId)) {
+        return;
+      }
+      seenIds.add(txId);
+
+      let status: 'included' | 'excluded' | 'pending' = 'included';
+      if (t.classification?.classificationType === 'excluded' || !t.classification?.included || t.category?.startsWith('제외')) {
+        status = 'excluded';
+        excludedCount++;
+      } else if (t.needsReview || t.classification?.needsConfirmation) {
+        status = 'pending';
+        pendingCount++;
+      } else {
+        status = 'included';
+        includedCount++;
+      }
+
+      processedTxs.push({
+        ...t,
+        importSessionId,
+        sourceFileName: payload.fileName,
+        importedAt,
+        transactionId: txId,
+        analysisStatus: status,
+      });
+    });
+
+    const dateRange =
+      payload.dateRange ||
+      (processedTxs.length > 0
+        ? `${processedTxs[processedTxs.length - 1].date} ~ ${processedTxs[0].date}`
+        : '기간 정보 없음');
+
+    const activeSession: ActiveCsvSession = {
+      importSessionId,
+      sourceFileName: payload.fileName,
+      importedAt,
+      dateRange,
+      totalRawCount: processedTxs.length,
+      includedCount,
+      excludedCount,
+      pendingCount,
+    };
+
+    this.data.otherSettings.transactions = processedTxs;
+    this.data.otherSettings.activeImportSessionId = importSessionId;
+    this.data.otherSettings.activeCsvSession = activeSession;
+
+    this.saveToStorage();
+    return activeSession;
+  }
+
+  public resetCurrentCsvSession(): void {
+    this.data.otherSettings.transactions = [];
+    this.data.otherSettings.activeImportSessionId = undefined;
+    this.data.otherSettings.activeCsvSession = undefined;
+    this.saveToStorage();
+  }
+}
+
+export interface ConsumerSpendingSummary {
+  activeSessionInfo?: ActiveCsvSession;
+  totalExpense: number;
+  totalCount: number;
+  categoryBreakdown: Array<{
+    category: string;
+    amount: number;
+    count: number;
+    percentage: number;
+  }>;
+  top5Merchants: Array<{
+    merchant: string;
+    totalAmount: number;
+    count: number;
+  }>;
+  excludedSummary: {
+    count: number;
+    totalAmount: number;
+  };
+  pendingSummary: {
+    count: number;
+    totalAmount: number;
+  };
+  totalSessionRawCount: number;
 }
 
 // Global Singleton Instance
@@ -939,6 +1599,38 @@ export interface IDataStore {
   getCategoryRules(): CategoryRule[];
   getExclusionRules(): ExclusionRule[];
   getOtherSettings(): AppData['otherSettings'];
+
+  // SSOT Calculated Summaries
+  syncAutoPlannerSchedules(): void;
+  getMonthlyIncomeSummary(year: number, month: number): {
+    totalIncome: number;
+    totalInflow: number;
+    businessIncome: number;
+    rentalIncome: number;
+    otherIncome: number;
+    inflowDetails: Array<{ id: string; name: string; type: string; amount: number; isActual: boolean }>;
+  };
+  getMonthlyLoanPayments(year: number, month: number): MonthlyLoanPayment[];
+  saveMonthlyLoanPayment(payment: MonthlyLoanPayment): Promise<void>;
+  getMonthlyCashflowSummary(year: number, month: number): {
+    totalInflow: number;
+    businessIncome: number;
+    rentalIncome: number;
+    otherIncome: number;
+    inflowDetails: Array<{ id: string; name: string; type: string; amount: number; isActual: boolean }>;
+    livingExpenses: number;
+    financialCost: number;
+    principalRepayment: number;
+    otherFixed: number;
+    totalOutflow: number;
+    netCashflow: number;
+    debtReduction: number;
+    outflowDetails: Array<{ id: string; name: string; category: string; amount: number }>;
+  };
+  getActiveSessionTransactions(): Transaction[];
+  getConsumerSpendingSummary(): ConsumerSpendingSummary;
+  startNewCsvSession(payload: { fileName: string; transactions: Transaction[]; dateRange?: string }): ActiveCsvSession;
+  resetCurrentCsvSession(): void;
 
   // Domain Mutations (Async for future Firebase Firestore calls)
   updateUserInfo(userInfo: Partial<UserInfo>): Promise<void>;

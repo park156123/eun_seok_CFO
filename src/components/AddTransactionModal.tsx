@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Transaction, ExpenseType } from '../types';
+import { Transaction } from '../types';
+import { CONSUMER_CATEGORY_GROUPS } from '../data/consumerCategories';
 
 interface AddTransactionModalProps {
   isOpen: boolean;
@@ -12,7 +13,6 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
   onClose,
   onAddTransaction,
 }) => {
-  const [expenseType, setExpenseType] = useState<ExpenseType>('living');
   const [isIncome, setIsIncome] = useState(false);
   const [merchant, setMerchant] = useState('');
   const [amount, setAmount] = useState('');
@@ -27,10 +27,8 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
 
     const numAmt = Number(amount);
     let icon = 'shopping_bag';
-    if (category === '식비') icon = 'restaurant';
-    else if (category === '교통') icon = 'directions_subway';
-    else if (category === '주거/통신') icon = 'home';
-    else if (category === '사업비') icon = 'work';
+    const foundGroup = CONSUMER_CATEGORY_GROUPS.find((g) => g.name === category);
+    if (foundGroup) icon = foundGroup.icon;
 
     const newTx: Transaction = {
       id: `tx-${Date.now()}`,
@@ -38,11 +36,12 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
       time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
       merchant,
       amount: numAmt,
-      type: expenseType,
+      type: 'living',
       category,
       icon,
       isIncome,
       memo,
+      userConfirmed: true,
     };
 
     onAddTransaction(newTx);
@@ -65,43 +64,22 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Income vs Expense & Living vs Business Switch */}
+          {/* Income vs Expense Switch */}
           <div className="flex gap-2 p-1 bg-[#e6e8ea] rounded-xl">
             <button
               type="button"
-              onClick={() => {
-                setIsIncome(false);
-                setExpenseType('living');
-              }}
+              onClick={() => setIsIncome(false)}
               className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-                !isIncome && expenseType === 'living'
-                  ? 'bg-white text-[#00236f] shadow-xs'
-                  : 'text-[#757682]'
+                !isIncome ? 'bg-white text-[#00236f] shadow-xs' : 'text-[#757682]'
               }`}
             >
-              생활비 (지출)
+              지출 (생활비)
             </button>
             <button
               type="button"
-              onClick={() => {
-                setIsIncome(false);
-                setExpenseType('business');
-              }}
+              onClick={() => setIsIncome(true)}
               className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-                !isIncome && expenseType === 'business'
-                  ? 'bg-[#006c49] text-white shadow-xs'
-                  : 'text-[#757682]'
-              }`}
-            >
-              사업비 (지출)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setIsIncome(true);
-              }}
-              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-                isIncome ? 'bg-[#1e3a8a] text-white shadow-xs' : 'text-[#757682]'
+                isIncome ? 'bg-[#00236f] text-white shadow-xs' : 'text-[#757682]'
               }`}
             >
               수입
@@ -111,12 +89,12 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
           {/* Merchant */}
           <div className="p-3 bg-white rounded-xl border border-[#c5c5d3]/20">
             <label className="block text-[11px] font-bold text-[#757682] mb-1">
-              거래처 / 내역명
+              상호명 / 내역명
             </label>
             <input
               type="text"
               required
-              placeholder="예: 스타벅스, 쿠팡, 클라우드 결제"
+              placeholder="예: 스타벅스, GS25, 쿠팡"
               value={merchant}
               onChange={(e) => setMerchant(e.target.value)}
               className="w-full bg-transparent border-none p-0 focus:outline-none text-sm text-[#191c1e] font-bold"
@@ -144,32 +122,31 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
               onChange={(e) => setCategory(e.target.value)}
               className="w-full bg-transparent border-none p-0 focus:outline-none text-sm text-[#191c1e]"
             >
-              <option value="식비">식비</option>
-              <option value="생활비">생활비</option>
-              <option value="교통">교통</option>
-              <option value="주거/통신">주거/통신</option>
-              <option value="사업비">사업비</option>
-              <option value="기타">기타</option>
+              {CONSUMER_CATEGORY_GROUPS.map((group) => (
+                <option key={group.name} value={group.name}>
+                  {group.name}
+                </option>
+              ))}
             </select>
           </div>
 
           {/* Memo */}
           <div className="p-3 bg-white rounded-xl border border-[#c5c5d3]/20">
-            <label className="block text-[11px] font-bold text-[#757682] mb-1">메모</label>
+            <label className="block text-[11px] font-bold text-[#757682] mb-1">메모 (선택)</label>
             <input
               type="text"
-              placeholder="간단한 메모 입력"
+              placeholder="예: 점심 식대, 선물 구입"
               value={memo}
               onChange={(e) => setMemo(e.target.value)}
-              className="w-full bg-transparent border-none p-0 focus:outline-none text-xs text-[#191c1e]"
+              className="w-full bg-transparent border-none p-0 focus:outline-none text-sm text-[#191c1e]"
             />
           </div>
 
           <button
             type="submit"
-            className="w-full py-4 bg-[#00236f] text-white font-bold text-sm rounded-xl shadow-md transition-transform active:scale-95"
+            className="w-full py-3.5 bg-[#00236f] text-white font-bold text-sm rounded-xl shadow-md transition-transform active:scale-95"
           >
-            내역 저장하기
+            저장하기
           </button>
         </form>
       </div>

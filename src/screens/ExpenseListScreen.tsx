@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
-import { Transaction, ExpenseType } from '../types';
+import { Transaction } from '../types';
+import { CONSUMER_CATEGORY_GROUPS, getCategoryGroup, parseCategoryString } from '../data/consumerCategories';
+import { GlobalMockDataStore } from '../services/dataStore';
+import { ActiveSessionBanner } from '../components/ActiveSessionBanner';
 
 interface ExpenseListScreenProps {
   transactions: Transaction[];
@@ -12,238 +15,244 @@ export const ExpenseListScreen: React.FC<ExpenseListScreenProps> = ({
   onUpdateTransaction,
   onDeleteTransaction,
 }) => {
-  const [filter, setFilter] = useState<'all' | 'living' | 'business'>('all');
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
+  const [selectedMajor, setSelectedMajor] = useState<string>('식비');
+  const [selectedMinor, setSelectedMinor] = useState<string>('외식');
 
-  // Filter transactions
-  const filtered = transactions.filter((t) => {
-    if (filter === 'living') return t.type === 'living';
-    if (filter === 'business') return t.type === 'business';
-    return true;
+  // Filter transactions for current active session
+  const activeSessionTxs = GlobalMockDataStore.getActiveSessionTransactions();
+  const displayTxs = activeSessionTxs.length > 0 ? activeSessionTxs : transactions;
+
+  const includedTxs = displayTxs.filter((t) => {
+    if (t.analysisStatus === 'excluded') return false;
+    const cat = t.category || '';
+    if (cat.startsWith('제외') || cat.includes('내부이체')) return false;
+    return !t.isIncome && (Number(t.amount) || 0) > 0;
   });
 
-  const totalExpense = filtered
-    .filter((t) => !t.isIncome)
-    .reduce((sum, t) => sum + t.amount, 0);
+  const totalExpense = includedTxs.reduce((sum, t) => sum + t.amount, 0);
 
   // Group by date
-  const groupedDates = Array.from(new Set(filtered.map((t) => t.date)));
+  const groupedDates = Array.from(new Set(includedTxs.map((t) => t.date)));
+
+  const handleStartEdit = (tx: Transaction) => {
+    setEditingTx(tx);
+    const parsed = parseCategoryString(tx.category);
+    setSelectedMajor(parsed.major);
+    setSelectedMinor(parsed.minor);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingTx) return;
+
+    const newCategory = `${selectedMajor} > ${selectedMinor}`;
+    const updatedTx: Transaction = {
+      ...editingTx,
+      type: 'living',
+      category: newCategory,
+      userConfirmed: true,
+      needsReview: false,
+      analysisStatus: 'included',
+    };
+
+    onUpdateTransaction(updatedTx);
+
+    await GlobalMockDataStore.saveUserMerchantLearning(
+      editingTx.merchantOriginal || editingTx.merchant,
+      editingTx.merchant,
+      selectedMajor,
+      selectedMinor
+    );
+
+    setEditingTx(null);
+  };
+
+  const activeMajorGroup = CONSUMER_CATEGORY_GROUPS.find((g) => g.name === selectedMajor) || CONSUMER_CATEGORY_GROUPS[0];
 
   return (
     <div className="space-y-4 pb-28">
-      {/* Filter Tabs */}
-      <section className="sticky top-16 bg-[#f7f9fb] py-2 z-30">
-        <div className="flex gap-2 overflow-x-auto no-scrollbar">
-          <button
-            id="filter-chip-all"
-            onClick={() => setFilter('all')}
-            className={`px-4 py-2 rounded-full font-label-md text-xs transition-all ${
-              filter === 'all'
-                ? 'bg-[#00236f] text-white shadow-xs'
-                : 'bg-white text-[#444651] border border-[#c5c5d3]/30 hover:bg-[#f2f4f6]'
-            }`}
-          >
-            전체
-          </button>
-          <button
-            id="filter-chip-living"
-            onClick={() => setFilter('living')}
-            className={`px-4 py-2 rounded-full font-label-md text-xs transition-all ${
-              filter === 'living'
-                ? 'bg-[#00236f] text-white shadow-xs'
-                : 'bg-white text-[#444651] border border-[#c5c5d3]/30 hover:bg-[#f2f4f6]'
-            }`}
-          >
-            생활비
-          </button>
-          <button
-            id="filter-chip-business"
-            onClick={() => setFilter('business')}
-            className={`px-4 py-2 rounded-full font-label-md text-xs transition-all ${
-              filter === 'business'
-                ? 'bg-[#00236f] text-white shadow-xs'
-                : 'bg-white text-[#444651] border border-[#c5c5d3]/30 hover:bg-[#f2f4f6]'
-            }`}
-          >
-            사업비
-          </button>
-        </div>
-      </section>
+      {/* Active Session Info Banner (Requirement 3) */}
+      <ActiveSessionBanner showActions={true} />
 
-      {/* Summary */}
-      <div className="my-2">
-        <p className="font-label-md text-xs text-[#444651] mb-1">총 지출</p>
-        <h2 className="font-dohyeon text-2xl text-[#00236f]">
-          {totalExpense.toLocaleString()}원
-        </h2>
+      {/* Header Summary */}
+      <div className="my-2 bg-white p-5 rounded-2xl shadow-xs border border-[#c5c5d3]/20 flex justify-between items-center">
+        <div>
+          <p className="font-label-md text-xs text-[#757682] mb-1">현재 세션 총 소비 지출</p>
+          <h2 className="font-dohyeon text-2xl text-[#00236f]">
+            -{totalExpense.toLocaleString()}원
+          </h2>
+        </div>
+        <div className="text-right">
+          <span className="px-3 py-1 bg-[#00236f]/10 text-[#00236f] text-xs font-bold rounded-full">
+            소비 포함 {includedTxs.length}건
+          </span>
+        </div>
       </div>
 
       {/* Transaction List */}
       <div className="space-y-4">
-        {groupedDates.map((dateStr) => {
-          const itemsOnDate = filtered.filter((t) => t.date === dateStr);
-          return (
-            <div key={dateStr} className="space-y-2">
-              <p className="font-label-md text-xs text-[#757682] py-1 border-b border-[#c5c5d3]/20">
-                {dateStr}
-              </p>
+        {groupedDates.length === 0 ? (
+          <div className="bg-white rounded-2xl p-8 text-center border border-[#c5c5d3]/20 text-[#757682]">
+            <span className="material-symbols-outlined text-4xl mb-2 text-[#c5c5d3]">receipt_long</span>
+            <p className="text-sm font-medium">소비로 집계된 지출 내역이 없습니다.</p>
+            <p className="text-xs text-[#909090] mt-1">월간결산 메뉴에서 CSV 파일을 업로드하거나 거래를 등록하세요.</p>
+          </div>
+        ) : (
+          groupedDates.map((dateStr) => {
+            const itemsOnDate = includedTxs.filter((t) => t.date === dateStr);
+            return (
+              <div key={dateStr} className="space-y-2">
+                <p className="font-label-md text-xs text-[#757682] py-1 border-b border-[#c5c5d3]/20 font-semibold px-1">
+                  {dateStr}
+                </p>
 
-              {itemsOnDate.map((tx) => (
-                <div
-                  key={tx.id}
-                  id={`tx-card-${tx.id}`}
-                  onClick={() => setEditingTx(tx)}
-                  className="group bg-white rounded-2xl p-4 shadow-[0_4px_12px_rgba(49,46,129,0.05)] border border-[#eceef0] flex items-center gap-3 transition-all hover:-translate-y-0.5 hover:shadow-md cursor-pointer active:scale-[0.98]"
-                >
-                  <div
-                    className={`w-11 h-11 rounded-full flex items-center justify-center shrink-0 ${
-                      tx.type === 'business'
-                        ? 'bg-[#ffdad6] text-[#93000a]'
-                        : tx.category === '식비'
-                        ? 'bg-[#1e3a8a] text-[#90a8ff]'
-                        : 'bg-[#ffddb8] text-[#653e00]'
-                    }`}
-                  >
-                    <span className="material-symbols-outlined">{tx.icon || 'receipt'}</span>
-                  </div>
+                {itemsOnDate.map((tx) => {
+                  const { major, minor } = parseCategoryString(tx.category);
+                  const catGroup = getCategoryGroup(major);
+                  const displayCategory = minor ? `${major} > ${minor}` : major;
 
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-start mb-1">
-                      <h3 className="font-body-md text-sm font-bold text-[#191c1e] truncate">
-                        {tx.merchant}
-                      </h3>
-                      <span className="font-dohyeon text-base text-[#00236f]">
-                        -{tx.amount.toLocaleString()}원
-                      </span>
+                  return (
+                    <div
+                      key={tx.id}
+                      className="bg-white p-4 rounded-2xl shadow-xs flex items-center justify-between border border-[#c5c5d3]/20 hover:border-[#00236f]/30 transition-all"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                          style={{ backgroundColor: catGroup.bgLight }}
+                        >
+                          <span
+                            className="material-symbols-outlined text-lg"
+                            style={{ color: catGroup.color }}
+                          >
+                            {catGroup.icon}
+                          </span>
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-sm text-[#191c1e]">{tx.merchant}</h3>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span
+                              className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                              style={{ backgroundColor: catGroup.bgLight, color: catGroup.color }}
+                            >
+                              {displayCategory}
+                            </span>
+                            {tx.needsReview && (
+                              <span className="bg-[#fff7ed] text-[#c2410c] text-[10px] font-bold px-1.5 py-0.5 rounded border border-[#ffedd5]">
+                                확인필요
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <span className="font-dohyeon text-base text-[#00236f] block">
+                            -{tx.amount.toLocaleString()}원
+                          </span>
+                          {tx.time && (
+                            <span className="text-[10px] text-[#757682] block">{tx.time}</span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleStartEdit(tx)}
+                            className="w-8 h-8 rounded-lg hover:bg-[#f2f4f6] text-[#757682] hover:text-[#00236f] flex items-center justify-center transition-colors cursor-pointer"
+                            title="분류 수정"
+                          >
+                            <span className="material-symbols-outlined text-base">edit</span>
+                          </button>
+                          <button
+                            onClick={() => onDeleteTransaction(tx.id)}
+                            className="w-8 h-8 rounded-lg hover:bg-[#fff0f0] text-[#757682] hover:text-[#ba1a1a] flex items-center justify-center transition-colors cursor-pointer"
+                            title="삭제"
+                          >
+                            <span className="material-symbols-outlined text-base">delete</span>
+                          </button>
+                        </div>
+                      </div>
                     </div>
-
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`px-2 py-0.5 text-[10px] font-bold rounded-md ${
-                          tx.type === 'business'
-                            ? 'bg-[#5c3800] text-[#ef9900]'
-                            : 'bg-[#6cf8bb]/30 text-[#00714d]'
-                        }`}
-                      >
-                        {tx.type === 'business' ? '사업비' : tx.category}
-                      </span>
-                      <span className="font-body-sm text-xs text-[#444651]">{tx.time}</span>
-                    </div>
-                  </div>
-
-                  <span className="material-symbols-outlined text-[#c5c5d3] group-hover:text-[#00236f] transition-colors">
-                    chevron_right
-                  </span>
-                </div>
-              ))}
-            </div>
-          );
-        })}
+                  );
+                })}
+              </div>
+            );
+          })
+        )}
       </div>
 
-      {/* Bottom Sheet Modal for Editing Transaction */}
+      {/* Edit Category Modal */}
       {editingTx && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-xs transition-opacity">
-          <div className="bg-[#f7f9fb] w-full max-w-2xl rounded-t-3xl shadow-2xl p-6 pb-8 border-t border-[#c5c5d3]/30 animate-in slide-in-from-bottom duration-250">
-            <div className="w-12 h-1 bg-[#c5c5d3] rounded-full mx-auto mb-5" />
-
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="font-dohyeon text-lg text-[#00236f]">거래 내역 상세 수정</h2>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl border border-[#00236f]/20">
+            <div className="flex justify-between items-center border-b border-[#c5c5d3]/20 pb-3">
+              <div>
+                <h3 className="font-dohyeon text-base text-[#00236f]">거래 분류 수정</h3>
+                <p className="text-xs text-[#757682] font-semibold mt-0.5">
+                  {editingTx.merchant}
+                </p>
+              </div>
               <button
-                id="close-edit-sheet-btn"
                 onClick={() => setEditingTx(null)}
-                className="text-[#757682] hover:text-[#00236f] p-1"
+                className="text-[#757682] hover:text-[#00236f] text-lg font-bold cursor-pointer"
               >
-                <span className="material-symbols-outlined">close</span>
+                ✕
               </button>
             </div>
 
-            <div className="space-y-3 mb-6">
-              {/* Type Switcher */}
-              <div className="flex gap-2 p-1 bg-[#e6e8ea] rounded-xl mb-2">
-                <button
-                  type="button"
-                  onClick={() => setEditingTx({ ...editingTx, type: 'living' })}
-                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-                    editingTx.type === 'living'
-                      ? 'bg-white text-[#00236f] shadow-xs'
-                      : 'text-[#757682]'
-                  }`}
-                >
-                  생활비
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingTx({ ...editingTx, type: 'business' })}
-                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-                    editingTx.type === 'business'
-                      ? 'bg-[#006c49] text-white shadow-xs'
-                      : 'text-[#757682]'
-                  }`}
-                >
-                  사업비
-                </button>
-              </div>
-
-              {/* Merchant */}
-              <div className="p-3 bg-white rounded-xl border border-[#c5c5d3]/20">
-                <label className="block text-[11px] font-bold text-[#757682] mb-1">거래처</label>
-                <input
-                  type="text"
-                  value={editingTx.merchant}
-                  onChange={(e) => setEditingTx({ ...editingTx, merchant: e.target.value })}
-                  className="w-full bg-transparent border-none p-0 focus:outline-none font-body-lg text-base text-[#191c1e] font-semibold"
-                />
-              </div>
-
-              {/* Amount */}
-              <div className="p-3 bg-white rounded-xl border border-[#c5c5d3]/20">
-                <label className="block text-[11px] font-bold text-[#757682] mb-1">금액</label>
-                <input
-                  type="number"
-                  value={editingTx.amount}
-                  onChange={(e) => setEditingTx({ ...editingTx, amount: Number(e.target.value) || 0 })}
-                  className="w-full bg-transparent border-none p-0 focus:outline-none font-body-lg text-base text-[#191c1e] font-semibold"
-                />
-              </div>
-
-              {/* Category */}
-              <div className="p-3 bg-white rounded-xl border border-[#c5c5d3]/20">
-                <label className="block text-[11px] font-bold text-[#757682] mb-1">카테고리</label>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-bold text-[#191c1e] block mb-1">
+                  대분류 선택
+                </label>
                 <select
-                  value={editingTx.category}
-                  onChange={(e) => setEditingTx({ ...editingTx, category: e.target.value })}
-                  className="w-full bg-transparent border-none p-0 focus:outline-none font-body-lg text-sm text-[#191c1e]"
+                  value={selectedMajor}
+                  onChange={(e) => {
+                    setSelectedMajor(e.target.value);
+                    const group = CONSUMER_CATEGORY_GROUPS.find((g) => g.name === e.target.value);
+                    if (group && group.subCategories.length > 0) {
+                      setSelectedMinor(group.subCategories[0].name);
+                    }
+                  }}
+                  className="w-full p-2.5 border border-[#c5c5d3] rounded-xl text-xs font-semibold focus:outline-none focus:border-[#00236f]"
                 >
-                  <option value="식비">식비</option>
-                  <option value="생활비">생활비</option>
-                  <option value="교통">교통</option>
-                  <option value="주거/통신">주거/통신</option>
-                  <option value="사업비">사업비</option>
-                  <option value="기타">기타</option>
+                  {CONSUMER_CATEGORY_GROUPS.map((g) => (
+                    <option key={g.name} value={g.name}>
+                      {g.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-[#191c1e] block mb-1">
+                  소분류 선택
+                </label>
+                <select
+                  value={selectedMinor}
+                  onChange={(e) => setSelectedMinor(e.target.value)}
+                  className="w-full p-2.5 border border-[#c5c5d3] rounded-xl text-xs font-semibold focus:outline-none focus:border-[#00236f]"
+                >
+                  {activeMajorGroup.subCategories.map((sub) => (
+                    <option key={sub.name} value={sub.name}>
+                      {sub.name}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 pt-2">
               <button
-                id="delete-tx-btn"
-                onClick={() => {
-                  onDeleteTransaction(editingTx.id);
-                  setEditingTx(null);
-                }}
-                className="px-4 py-3.5 bg-[#ffdad6] text-[#ba1a1a] font-bold text-sm rounded-xl hover:bg-[#ffdad6]/80 transition-transform active:scale-95 flex items-center justify-center"
+                onClick={() => setEditingTx(null)}
+                className="flex-1 py-2.5 border border-[#c5c5d3]/50 text-[#757682] font-dohyeon text-xs rounded-xl hover:bg-[#f2f4f6] cursor-pointer"
               >
-                <span className="material-symbols-outlined text-lg">delete</span>
+                취소
               </button>
-
               <button
-                id="save-tx-btn"
-                onClick={() => {
-                  onUpdateTransaction(editingTx);
-                  setEditingTx(null);
-                }}
-                className="flex-1 py-3.5 bg-[#00236f] text-white font-bold text-sm rounded-xl shadow-md transition-transform active:scale-95"
+                onClick={handleSaveEdit}
+                className="flex-1 py-2.5 bg-[#00236f] text-white font-dohyeon text-xs rounded-xl hover:bg-[#1e3a8a] cursor-pointer shadow-xs"
               >
                 저장하기
               </button>

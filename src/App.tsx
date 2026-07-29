@@ -92,7 +92,7 @@ export function App() {
     await GlobalMockDataStore.addSchedule(newSch);
   };
 
-  // CSV Import Parser Demo
+  // CSV Import Handler
   const handleImportCSV = async (csvText: string) => {
     const lines = csvText.split('\n');
     const newItems: Transaction[] = [];
@@ -108,7 +108,7 @@ export function App() {
           merchant: parts[1]?.trim() || 'CSV 결제건',
           amount: Math.abs(Number(parts[2]) || 10000),
           type: 'living',
-          category: '생활비',
+          category: '기타지출',
           icon: 'receipt',
           isIncome: false,
         });
@@ -116,9 +116,10 @@ export function App() {
     });
 
     if (newItems.length > 0) {
-      for (const item of newItems) {
-        await GlobalMockDataStore.addTransaction(item);
-      }
+      GlobalMockDataStore.startNewCsvSession({
+        fileName: '업로드_거래내역.csv',
+        transactions: newItems,
+      });
     }
   };
 

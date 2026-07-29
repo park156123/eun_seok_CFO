@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SettlementData, IncomeSource, IncomeRecord, ClassificationResult, ExclusionReasonCode, MerchantRule, ExclusionRule, RuleConfidence } from '../types';
+import { SettlementData, IncomeSource, IncomeRecord, ClassificationResult, ExclusionReasonCode, MerchantRule, ExclusionRule, RuleConfidence, Transaction } from '../types';
 import { GlobalMockDataStore } from '../services/dataStore';
+import { ActiveSessionBanner } from '../components/ActiveSessionBanner';
 import {
   readCsvFileWithEncoding,
   parseCsvText,
@@ -767,6 +768,26 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
           const totalCount = classifiedTxs.length;
           const autoRate = totalCount > 0 ? Math.round((autoCount / totalCount) * 1000) / 10 : 0;
 
+          // Requirement 1 & 5: CSV upload starts a fresh independent session in GlobalMockDataStore
+          const sessionTxs: Transaction[] = classifiedTxs.map((t) => ({
+            id: t.id,
+            date: t.date,
+            time: t.time || '12:00',
+            merchant: t.merchant,
+            merchantOriginal: t.merchantOriginal,
+            amount: t.amount,
+            type: 'living',
+            category: t.category || '분류 대기',
+            icon: 'receipt',
+            userConfirmed: t.userConfirmed,
+            needsReview: t.needsReview,
+            classification: t.classification,
+          }));
+          GlobalMockDataStore.startNewCsvSession({
+            fileName: file.name,
+            transactions: sessionTxs,
+          });
+
           updateCurrentRecord((rec) => ({
             ...rec,
             csvUploaded: true,
@@ -820,6 +841,25 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
     const excludedCount = classifiedTxs.filter((t) => t.classification?.classificationType === 'excluded').length;
     const totalCount = classifiedTxs.length;
     const autoRate = totalCount > 0 ? Math.round((autoCount / totalCount) * 1000) / 10 : 0;
+
+    const sessionTxs: Transaction[] = classifiedTxs.map((t) => ({
+      id: t.id,
+      date: t.date,
+      time: t.time || '12:00',
+      merchant: t.merchant,
+      merchantOriginal: t.merchantOriginal,
+      amount: t.amount,
+      type: 'living',
+      category: t.category || '분류 대기',
+      icon: 'receipt',
+      userConfirmed: t.userConfirmed,
+      needsReview: t.needsReview,
+      classification: t.classification,
+    }));
+    GlobalMockDataStore.startNewCsvSession({
+      fileName: pendingFileName || '업로드_거래내역.csv',
+      transactions: sessionTxs,
+    });
 
     updateCurrentRecord((rec) => ({
       ...rec,
@@ -913,12 +953,25 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   };
 
   const handleResetCSVUpload = () => {
+    GlobalMockDataStore.resetCurrentCsvSession();
     setCsvUploadState('idle');
     setCsvErrorMsg(null);
     setPendingCsvData(null);
     updateCurrentRecord((rec) => ({
       ...rec,
       csvUploaded: false,
+      csvFileName: undefined,
+      csvTotalCount: 0,
+      csvAutoCount: 0,
+      csvReviewCount: 0,
+      csvExcludedCount: 0,
+      csvDuplicateCount: 0,
+      csvAutoRate: 0,
+      csvValidDateCount: 0,
+      csvValidMerchantCount: 0,
+      csvValidAmountCount: 0,
+      csvErrorCount: 0,
+      transactions: [],
     }));
   };
 
@@ -980,20 +1033,12 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
 
     if (applyFuture && targetMerchant) {
       if (isConsumer) {
-        const userRule: MerchantRule = {
-          id: `user-rule-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          merchantMaster: targetMerchant,
-          patterns: Array.from(new Set([targetMerchant, editingTx.merchantOriginal || targetMerchant])).filter(Boolean),
-          matchType: 'contains',
-          majorCategory: modalMajorCat,
-          minorCategory: modalMinorCat,
-          included: true,
-          confidence: 'high',
-          source: 'user-confirmed',
-          isActive: true,
-          memo: '사용자 학습 규칙',
-        };
-        GlobalMockDataStore.saveMerchantRule(userRule);
+        GlobalMockDataStore.saveUserMerchantLearning(
+          editingTx.merchantOriginal || targetMerchant,
+          targetMerchant,
+          modalMajorCat,
+          modalMinorCat
+        );
       } else {
         const userExRule: ExclusionRule = {
           id: `user-ex-rule-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -2034,9 +2079,14 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                 <h3 className="font-dohyeon text-lg text-[#00236f]">
                   {selectedMonth} 거래내역 불러오기
                 </h3>
-                <p className="text-xs text-[#757682] mt-1">
+                <p className="text-xs text-[#757682] mt-1 mb-3">
                   카드사/은행에서 다운로드한 CSV 파일이나 내역을 불러오면 AI가 자동 분류합니다.
                 </p>
+                {/* Active Session Info Banner & Action Buttons */}
+                <ActiveSessionBanner
+                  onStartNewAnalysis={handleResetCSVUpload}
+                  onConfirmSettlement={handleConfirmSettlement}
+                />
               </div>
 
               {/* Requirement 4: CSV 업로드 3가지 상태 (업로드 전, 업로드 중, 업로드 완료, 오류 처리) */}

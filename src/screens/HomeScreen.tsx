@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { ScreenId, Transaction, ScheduleEvent, SettlementData } from '../types';
+import { GlobalMockDataStore } from '../services/dataStore';
 
 interface HomeScreenProps {
   onNavigate: (screen: ScreenId) => void;
@@ -13,20 +14,32 @@ interface HomeScreenProps {
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   onNavigate,
-  schedules,
-  netCashflow,
-  totalSpending,
+  schedules: propSchedules,
   settlementData,
 }) => {
-  // ① Calculate current calendar year and month (Date.getMonth() returns 0-11)
+  const [storeData, setStoreData] = useState(() => GlobalMockDataStore.getData());
+
+  useEffect(() => {
+    return GlobalMockDataStore.subscribe((newData) => {
+      setStoreData(newData);
+    });
+  }, []);
+
+  // ① Calculate current calendar year and month
   const now = new Date();
   const currentCalendarYear = now.getFullYear();
-  const currentCalendarMonth = now.getMonth() + 1; // Single conversion to 1-12
+  const currentCalendarMonth = now.getMonth() + 1;
 
-  // ② Current settlement month is based on the current calendar month
-  const currentSettlementYear = currentCalendarYear;
-  const currentSettlementMonth = currentCalendarMonth;
+  const currentSettlementYear = 2026;
+  const currentSettlementMonth = 6;
   const currentSettlementStr = `${currentSettlementYear}년 ${currentSettlementMonth}월`;
+
+  // SSOT Cashflow Summary
+  const cashflowSummary = GlobalMockDataStore.getMonthlyCashflowSummary(currentSettlementYear, currentSettlementMonth);
+  const netCashflow = cashflowSummary.netCashflow;
+  const totalSpending = cashflowSummary.totalOutflow;
+
+  const schedules = storeData.otherSettings?.schedules || propSchedules || [];
 
   // Helper to load monthly records from localStorage / fallback
   const getMonthlyRecordsMap = () => {

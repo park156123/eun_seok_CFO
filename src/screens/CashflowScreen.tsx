@@ -3,6 +3,7 @@ import { GlobalMockDataStore } from '../services/dataStore';
 
 export const CashflowScreen: React.FC = () => {
   const [data, setData] = useState(() => GlobalMockDataStore.getData());
+  const [targetMonthStr, setTargetMonthStr] = useState('2026년 6월');
 
   useEffect(() => {
     return GlobalMockDataStore.subscribe((newData) => {
@@ -10,21 +11,21 @@ export const CashflowScreen: React.FC = () => {
     });
   }, []);
 
-  // Compute inflow from GlobalMockDataStore income sources
-  const incomeSources = data.monthlyIncome.incomeSources || [];
-  const totalInflow = incomeSources.reduce(
-    (sum, inc) => sum + (Number(inc.monthlyIncome) || 0),
-    0
-  );
+  // Parse target year & month
+  const parseYearMonth = (str: string) => {
+    const match = str.match(/(\d+)년\s*(\d+)월/);
+    if (match) {
+      return { year: parseInt(match[1], 10), month: parseInt(match[2], 10) };
+    }
+    return { year: 2026, month: 6 };
+  };
 
-  // Compute fixed outflow from fixed expenses
-  const fixedExpenses = data.fixedExpenses || [];
-  const totalOutflow = fixedExpenses.reduce(
-    (sum, exp) => sum + (Number(exp.monthlyAmount) || 0),
-    0
-  );
+  const { year, month } = parseYearMonth(targetMonthStr);
+  const cashflow = GlobalMockDataStore.getMonthlyCashflowSummary(year, month);
 
-  const netFlow = totalInflow - totalOutflow;
+  const totalInflow = cashflow.totalInflow;
+  const totalOutflow = cashflow.totalOutflow;
+  const netFlow = cashflow.netCashflow;
   const outflowRatio =
     totalInflow > 0 ? Math.min(100, Math.round((totalOutflow / totalInflow) * 100)) : 0;
 
@@ -45,9 +46,34 @@ export const CashflowScreen: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-28">
+      {/* Month Selector Bar */}
+      <div className="flex justify-between items-center bg-white p-3 rounded-2xl border border-[#c5c5d3]/20 shadow-xs">
+        <span className="font-bold text-sm text-[#00236f] flex items-center gap-1.5">
+          <span className="material-symbols-outlined text-lg">calendar_month</span>
+          기준 월
+        </span>
+        <div className="flex items-center gap-2">
+          {['2026년 6월', '2026년 7월', '2026년 8월'].map((m) => (
+            <button
+              key={m}
+              onClick={() => setTargetMonthStr(m)}
+              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${
+                targetMonthStr === m
+                  ? 'bg-[#00236f] text-white shadow-xs'
+                  : 'bg-[#e6e8ea] text-[#444651] hover:bg-[#d8dadc]'
+              }`}
+            >
+              {m.replace('2026년 ', '')}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* 1. Summary Overview Header */}
       <section className="bg-white rounded-3xl p-6 shadow-xs border border-[#c5c5d3]/20 space-y-4">
-        <span className="font-label-md text-xs text-[#757682]">순현금흐름 (NET FLOW)</span>
+        <span className="font-label-md text-xs text-[#757682]">
+          {targetMonthStr} 순현금흐름 (NET FLOW)
+        </span>
         <h2
           className={`font-dohyeon text-3xl font-bold ${
             netFlow >= 0 ? 'text-[#006c49]' : 'text-[#ba1a1a]'
@@ -119,16 +145,16 @@ export const CashflowScreen: React.FC = () => {
       <section className="space-y-3">
         <h3 className="font-dohyeon text-base text-[#006c49] flex items-center gap-2 px-1">
           <span className="material-symbols-outlined text-lg">arrow_downward</span>
-          유입 상세 ({incomeSources.length}건)
+          유입 상세 ({cashflow.inflowDetails.length}건)
         </h3>
 
         <div className="bg-white rounded-2xl p-4 shadow-xs border border-[#c5c5d3]/20 space-y-3">
-          {incomeSources.length === 0 ? (
+          {cashflow.inflowDetails.length === 0 ? (
             <p className="text-center text-[#757682] text-xs py-2">
               등록된 수입원이 없습니다. (0원)
             </p>
           ) : (
-            incomeSources.map((item) => (
+            cashflow.inflowDetails.map((item) => (
               <div
                 key={item.id}
                 className="flex justify-between items-center text-sm py-1 border-b border-[#c5c5d3]/10 last:border-0"
@@ -138,12 +164,19 @@ export const CashflowScreen: React.FC = () => {
                     payments
                   </span>
                   <div>
-                    <span className="font-bold text-[#191c1e] block">{item.incomeName}</span>
-                    <span className="text-[10px] text-[#757682]">{item.incomeType}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-[#191c1e] block">{item.name}</span>
+                      {item.isActual && (
+                        <span className="text-[9px] bg-[#6cf8bb]/40 text-[#00714d] px-1.5 py-0.2 rounded font-bold">
+                          확정
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-[#757682]">{item.type}</span>
                   </div>
                 </div>
                 <span className="font-bold text-[#006c49]">
-                  +{(Number(item.monthlyIncome) || 0).toLocaleString()}원
+                  +{(Number(item.amount) || 0).toLocaleString()}원
                 </span>
               </div>
             ))
@@ -155,33 +188,31 @@ export const CashflowScreen: React.FC = () => {
       <section className="space-y-3">
         <h3 className="font-dohyeon text-base text-[#ba1a1a] flex items-center gap-2 px-1">
           <span className="material-symbols-outlined text-lg">arrow_upward</span>
-          유출 상세 ({fixedExpenses.length}건)
+          유출 상세 ({cashflow.outflowDetails.length}건)
         </h3>
 
         <div className="bg-white rounded-2xl p-4 shadow-xs border border-[#c5c5d3]/20 space-y-3">
-          {fixedExpenses.length === 0 ? (
+          {cashflow.outflowDetails.length === 0 ? (
             <p className="text-center text-[#757682] text-xs py-2">
-              등록된 고정지출이 없습니다. (0원)
+              등록된 지출 내역이 없습니다. (0원)
             </p>
           ) : (
-            fixedExpenses.map((exp) => (
+            cashflow.outflowDetails.map((exp) => (
               <div
                 key={exp.id}
                 className="flex justify-between items-center text-sm py-1 border-b border-[#c5c5d3]/10 last:border-0"
               >
                 <div className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-[#ba1a1a] text-base">
-                    shopping_cart
+                    {exp.id === 'interest' ? 'percent' : exp.id === 'principal' ? 'account_balance' : 'shopping_cart'}
                   </span>
                   <div>
                     <span className="font-bold text-[#191c1e] block">{exp.name}</span>
-                    <span className="text-[10px] text-[#757682]">
-                      {exp.category} ({exp.paymentDay || '매월'})
-                    </span>
+                    <span className="text-[10px] text-[#757682]">{exp.category}</span>
                   </div>
                 </div>
                 <span className="font-bold text-[#ba1a1a]">
-                  -{(Number(exp.monthlyAmount) || 0).toLocaleString()}원
+                  -{(Number(exp.amount) || 0).toLocaleString()}원
                 </span>
               </div>
             ))
@@ -193,10 +224,9 @@ export const CashflowScreen: React.FC = () => {
       <div className="bg-[#6cf8bb]/20 border border-[#6cf8bb]/40 p-4 rounded-2xl flex items-start gap-3">
         <span className="material-symbols-outlined text-[#00714d] text-xl shrink-0">info</span>
         <p className="text-xs text-[#00714d] leading-relaxed">
-          <span className="font-bold">원칙 알림:</span> 최초설정에서 등록한 월수입과 고정지출이 순현금흐름에 정확하게 수치화되어 실시간 반영됩니다.
+          <span className="font-bold">SSOT 원칙:</span> 월간결산 및 기본정보관리의 동일한 실시간 데이터 소스를 참조하여 순현금흐름이 자동 산출됩니다.
         </p>
       </div>
     </div>
   );
 };
-
