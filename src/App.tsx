@@ -21,7 +21,6 @@ import { AIQuestionScreen } from './screens/AIQuestionScreen';
 
 import { LedgerMainScreen } from './screens/LedgerMainScreen';
 import { ExpenseListScreen } from './screens/ExpenseListScreen';
-import { SpendingAnalysisScreen } from './screens/SpendingAnalysisScreen';
 import { MonthlySettlementScreen } from './screens/MonthlySettlementScreen';
 
 import { AssetsMainScreen } from './screens/AssetsMainScreen';
@@ -36,6 +35,14 @@ import { GlobalMockDataStore } from './services/dataStore';
 
 export function App() {
   const [currentScreen, setCurrentScreen] = useState<ScreenId>('1-0');
+  const [expenseListCategoryFilter, setExpenseListCategoryFilter] = useState<string | null>(null);
+
+  const handleNavigate = (screen: ScreenId, categoryFilter?: string) => {
+    if (screen === '2-1' && categoryFilter !== undefined) {
+      setExpenseListCategoryFilter(categoryFilter);
+    }
+    setCurrentScreen(screen);
+  };
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
   // Subscribe to central GlobalMockDataStore
@@ -176,7 +183,7 @@ export function App() {
       case '2-0':
         return (
           <LedgerMainScreen
-            onNavigate={setCurrentScreen}
+            onNavigate={handleNavigate}
             onOpenAddModal={() => setIsAddModalOpen(true)}
             transactions={transactions}
           />
@@ -187,10 +194,18 @@ export function App() {
             transactions={transactions}
             onUpdateTransaction={handleUpdateTransaction}
             onDeleteTransaction={handleDeleteTransaction}
+            initialCategoryFilter={expenseListCategoryFilter}
+            onClearCategoryFilter={() => setExpenseListCategoryFilter(null)}
           />
         );
       case '2-2':
-        return <SpendingAnalysisScreen />;
+        return (
+          <LedgerMainScreen
+            onNavigate={handleNavigate}
+            onOpenAddModal={() => setIsAddModalOpen(true)}
+            transactions={transactions}
+          />
+        );
       case '2-3':
         return (
           <MonthlySettlementScreen

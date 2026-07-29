@@ -42,6 +42,7 @@ export interface Transaction {
 
   // 자동분류 및 월간결산 확장 필드
   merchantOriginal?: string;
+  merchantMaster?: string;
   classification?: ClassificationResult;
   userConfirmed?: boolean;
   transactionFingerprint?: string;
@@ -185,6 +186,8 @@ export interface ChatMessage {
 export interface SettlementData {
   hasData: boolean;
   targetMonth: string; // e.g., '2026년 8월'
+  year?: number;
+  month?: number;
   status?: '미결산' | '진행중' | '완료';
   baseMonth?: string; // e.g., '2026년 7월 결산'
   transactionCount?: number; // e.g., 328

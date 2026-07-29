@@ -82,6 +82,9 @@ export const CONSUMER_CATEGORY_GROUPS: ConsumerCategoryGroup[] = [
     color: '#059669',
     bgLight: '#d1fae5',
     subCategories: [
+      { name: '아이보험', code: 'insurance_child' },
+      { name: '본인보험', code: 'insurance_self' },
+      { name: '운전자보험', code: 'insurance_driver' },
       { name: '보험료', code: 'insurance' },
     ],
   },

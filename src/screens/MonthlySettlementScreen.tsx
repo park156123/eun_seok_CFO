@@ -2,6 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { SettlementData, IncomeSource, IncomeRecord, ClassificationResult, ExclusionReasonCode, MerchantRule, ExclusionRule, RuleConfidence, Transaction } from '../types';
 import { GlobalMockDataStore } from '../services/dataStore';
 import { ActiveSessionBanner } from '../components/ActiveSessionBanner';
+import { isConsumerTransaction } from '../utils/consumerExpenseUtils';
+import { useSelectedMonth } from '../context/SelectedMonthContext';
+
 import {
   readCsvFileWithEncoding,
   parseCsvText,
@@ -122,10 +125,25 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   settlementData,
   onUpdateSettlement,
 }) => {
+  const { formattedSelectedMonth, setSelectedMonth: setGlobalSelectedMonth } = useSelectedMonth();
   // Available Months for Settlement (전월 결산 기준)
   const monthList = ['2026년 4월', '2026년 5월', '2026년 6월', '2026년 7월'];
-  // Default base settlement month is June 2026 (전월 결산)
-  const [selectedMonth, setSelectedMonth] = useState<string>('2026년 6월');
+  // Default base settlement month receives global selectedMonth as default initial value
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => formattedSelectedMonth || '2026년 4월');
+
+  // Sync internal selectedMonth state with global SelectedMonthContext
+  useEffect(() => {
+    if (selectedMonth && setGlobalSelectedMonth) {
+      setGlobalSelectedMonth(selectedMonth);
+    }
+  }, [selectedMonth, setGlobalSelectedMonth]);
+
+  useEffect(() => {
+    if (formattedSelectedMonth && formattedSelectedMonth !== selectedMonth) {
+      setSelectedMonth(formattedSelectedMonth);
+    }
+  }, [formattedSelectedMonth]);
+
 
   // Accordion state for Step Progress Card (Requirement 11 - Collapsed by default)
   const [isStepsExpanded, setIsStepsExpanded] = useState<boolean>(false);
@@ -1140,6 +1158,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
 
     setTimeout(() => {
       setIsCompleting(false);
+      setGlobalSelectedMonth(selectedMonth);
       updateCurrentRecord((rec) => ({
         ...rec,
         status: '결산잠금', // Lock status (Requirement 2)
@@ -1174,33 +1193,36 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   const totalSavings = currentRecord.savingsInvestments.reduce((s, i) => s + (i.amount || 0), 0);
 
   const consumerExpense = currentRecord.transactions
-    .filter((t) => {
-      const cls = t.classification;
-      return cls ? cls.classificationType === 'consumer' : t.type === 'living';
-    })
-    .reduce((s, t) => s + t.amount, 0);
+    .filter(isConsumerTransaction)
+    .reduce((s, t) => s + (Number(t.amount) || 0), 0);
 
   const livingExpense = consumerExpense;
 
-  const businessExpense = currentRecord.transactions
-    .filter((t) => {
-      const cls = t.classification;
-      return cls ? cls.exclusionReason === 'business_transaction' : t.type === 'business';
-    })
-    .reduce((s, t) => s + t.amount, 0);
-
-  const financialCost = currentRecord.transactions
-    .filter((t) => t.type === 'financial')
-    .reduce((s, t) => s + t.amount, 0);
+  const loanPayments = GlobalMockDataStore.getMonthlyLoanPayments(currentRecord.year, currentRecord.month);
+  const debtCount = loanPayments.length;
+  const isActualInterestUsed = loanPayments.some((p) => p.actualInterest !== null && p.actualInterest !== undefined);
+  const financialCost = loanPayments.reduce(
+    (s, p) => s + (p.actualInterest ?? p.estimatedInterest ?? 0),
+    0
+  );
 
   const debtPrincipal = currentRecord.transactions
     .filter((t) => {
+      if (t.isIncome) return false;
       const cls = t.classification;
-      return cls ? cls.exclusionReason === 'debt_principal_repayment' : t.type === 'debt';
+      if (cls) {
+        return (
+          cls.classificationType === 'debt_principal' ||
+          cls.exclusionReason === 'debt_principal_repayment' ||
+          cls.exclusionReason === 'debt'
+        );
+      }
+      const cat = t.category || '';
+      return t.type === 'debt' || cat.includes('부채상환') || cat.includes('원금상환');
     })
-    .reduce((s, t) => s + t.amount, 0);
+    .reduce((s, t) => s + (Number(t.amount) || 0), 0);
 
-  const totalCashOutflow = consumerExpense + totalSavings;
+  const totalCashOutflow = consumerExpense + financialCost + debtPrincipal + totalSavings;
   const netCashFlow = totalIncome - totalCashOutflow;
 
   const needsReviewCount = currentRecord.transactions.filter((t) => {
@@ -1353,7 +1375,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
           </section>
 
           {/* Breakdown Items Grid */}
-          <section className="grid grid-cols-2 gap-3 text-xs">
+          <section className="grid grid-cols-3 gap-3 text-xs">
             <div className="bg-white p-3.5 rounded-xl border border-[#c5c5d3]/30 shadow-2xs">
               <span className="text-[#757682] block mb-1 font-medium">생활지출</span>
               <span className="font-dohyeon text-sm text-[#ba1a1a]">
@@ -1361,24 +1383,24 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
               </span>
             </div>
             <div className="bg-white p-3.5 rounded-xl border border-[#c5c5d3]/30 shadow-2xs">
-              <span className="text-[#757682] block mb-1 font-medium">사업지출</span>
-              <span className="font-dohyeon text-sm text-[#00236f]">
-                {formatKRW(businessExpense)}원
-              </span>
-            </div>
-            <div className="bg-white p-3.5 rounded-xl border border-[#c5c5d3]/30 shadow-2xs">
               <span className="text-[#757682] block mb-1 font-medium">금융비용 (이자)</span>
-              <span className="font-dohyeon text-sm text-[#d97706]">
+              <span className="font-dohyeon text-sm text-[#d97706] block">
                 {formatKRW(financialCost)}원
+              </span>
+              <span className="text-[10px] text-[#757682] mt-1 block">
+                기본정보 부채 {debtCount}건 기준 ({isActualInterestUsed ? '실제 금액' : '예상 금액'})
               </span>
             </div>
             <div className="bg-white p-3.5 rounded-xl border border-[#c5c5d3]/30 shadow-2xs">
               <span className="text-[#757682] block mb-1 font-medium">부채상환 원금</span>
-              <span className="font-dohyeon text-sm text-[#444651]">
+              <span className="font-dohyeon text-sm text-[#444651] block">
                 {formatKRW(debtPrincipal)}원
               </span>
+              <span className="text-[10px] text-[#757682] mt-1 block">
+                CSV 원금상환 지정건
+              </span>
             </div>
-            <div className="col-span-2 bg-[#f0f4fd] p-3.5 rounded-xl border border-[#00236f]/20 flex justify-between items-center">
+            <div className="col-span-3 bg-[#f0f4fd] p-3.5 rounded-xl border border-[#00236f]/20 flex justify-between items-center">
               <div>
                 <span className="text-[#00236f] font-bold block">저축·투자 (자산증가)</span>
                 <span className="text-[11px] text-[#757682]">
@@ -1422,7 +1444,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
               <div className="bg-[#f7f9fb] p-3.5 rounded-xl border border-[#c5c5d3]/20">
                 <span className="font-bold text-[#00236f] block mb-1">🏠 지출 및 자산 축적</span>
                 <p className="text-[#444651]">
-                  생활지출({formatKRW(livingExpense)}원)과 사업비({formatKRW(businessExpense)}원)를 통제하여{' '}
+                  생활지출({formatKRW(livingExpense)}원)을 효과적으로 통제하여{' '}
                   <span className="font-bold text-[#006c49]">
                     {formatKRW(totalSavings)}원
                   </span>

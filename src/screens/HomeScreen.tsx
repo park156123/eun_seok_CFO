@@ -1,22 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { ScreenId, Transaction, ScheduleEvent, SettlementData } from '../types';
 import { GlobalMockDataStore } from '../services/dataStore';
+import { useSelectedMonth } from '../context/SelectedMonthContext';
+import { MonthSelector } from '../components/MonthSelector';
+import { getMonthlyRecordForMonth, getExpenseSummaryForMonth } from '../utils/monthDataSelectors';
 
 interface HomeScreenProps {
   onNavigate: (screen: ScreenId) => void;
-  transactions: Transaction[];
-  schedules: ScheduleEvent[];
-  netCashflow: number;
-  totalSpending: number;
-  settlementData: SettlementData;
+  transactions?: Transaction[];
+  schedules?: ScheduleEvent[];
+  netCashflow?: number;
+  totalSpending?: number;
+  settlementData?: SettlementData;
   onToggleDataState?: () => void;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   onNavigate,
   schedules: propSchedules,
-  settlementData,
 }) => {
+  const { selectedMonth, setSelectedMonth, formattedSelectedMonth, year, month } = useSelectedMonth();
   const [storeData, setStoreData] = useState(() => GlobalMockDataStore.getData());
 
   useEffect(() => {
@@ -25,119 +28,71 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     });
   }, []);
 
-  // ① Calculate current calendar year and month
-  const now = new Date();
-  const currentCalendarYear = now.getFullYear();
-  const currentCalendarMonth = now.getMonth() + 1;
-
-  const currentSettlementYear = 2026;
-  const currentSettlementMonth = 6;
-  const currentSettlementStr = `${currentSettlementYear}년 ${currentSettlementMonth}월`;
-
-  // SSOT Cashflow Summary
-  const cashflowSummary = GlobalMockDataStore.getMonthlyCashflowSummary(currentSettlementYear, currentSettlementMonth);
-  const netCashflow = cashflowSummary.netCashflow;
-  const totalSpending = cashflowSummary.totalOutflow;
-
   const schedules = storeData.otherSettings?.schedules || propSchedules || [];
 
-  // Helper to load monthly records from localStorage / fallback
-  const getMonthlyRecordsMap = () => {
-    try {
-      const saved = localStorage.getItem('cfo_monthly_records_v3');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error(e);
-    }
-    return {
-      '2026년 5월': {
-        status: '결산잠금',
-        completedAtDate: '2026.06.02',
-        completedAtTime: '19:40',
-      },
-      '2026년 6월': {
-        status: '진행중',
-      },
-    };
-  };
+  const currentRecord = getMonthlyRecordForMonth(selectedMonth);
+  const expenseSummary = getExpenseSummaryForMonth(selectedMonth);
 
-  const recordsMap = getMonthlyRecordsMap();
-
-  // ③ Query latest completed settlement from actual saved records
-  const findLatestCompletedSettlement = (records: Record<string, any>) => {
-    const completedEntries = Object.entries(records).filter(([_, rec]) => {
-      return rec && (rec.status === '완료' || rec.status === '결산잠금');
-    });
-
-    if (completedEntries.length === 0) {
-      const prevMonthNum = currentCalendarMonth === 1 ? 12 : currentCalendarMonth - 1;
-      const prevYearNum = currentCalendarMonth === 1 ? currentCalendarYear - 1 : currentCalendarYear;
-      return {
-        monthStr: `${prevYearNum}년 ${prevMonthNum}월`,
-        lastUpdated: '-',
-      };
-    }
-
-    const parsedList = completedEntries.map(([key, rec]) => {
-      const match = key.match(/(\d{4})년\s*(\d{1,2})월/);
-      const y = match ? parseInt(match[1], 10) : 0;
-      const m = match ? parseInt(match[2], 10) : 0;
-      const dateStr = rec.completedAtDate
-        ? `${rec.completedAtDate}${rec.completedAtTime ? ' ' + rec.completedAtTime : ''}`
-        : '-';
-      return { key, year: y, month: m, dateStr };
-    });
-
-    parsedList.sort((a, b) => {
-      if (a.year !== b.year) return b.year - a.year;
-      return b.month - a.month;
-    });
-
-    const top = parsedList[0];
-    return {
-      monthStr: top.key,
-      lastUpdated: top.dateStr,
-    };
-  };
-
-  const latestCompleted = findLatestCompletedSettlement(recordsMap);
-  const cleanBaseMonth = latestCompleted.monthStr;
-  const lastUpdated =
-    latestCompleted.lastUpdated !== '-'
-      ? latestCompleted.lastUpdated
-      : settlementData.lastUpdated || '-';
-
-  // Determine current settlement status for the active settlement month
-  const currentRecord = recordsMap[currentSettlementStr];
-  const currentStatus = currentRecord
-    ? currentRecord.status === '결산잠금'
+  const currentStatus: '완료' | '진행중' | '미결산' = currentRecord
+    ? currentRecord.status === '결산잠금' || currentRecord.status === '완료'
       ? '완료'
-      : currentRecord.status === '미시작'
-      ? '미결산'
-      : currentRecord.status
-    : settlementData.status || '미결산';
+      : currentRecord.status === '진행중'
+      ? '진행중'
+      : '미결산'
+    : '미결산';
+
+  const hasSettlementData = currentStatus === '완료' || currentStatus === '진행중';
+
+  // Calculate stats for current selected month if record exists
+  let totalIncome = 0;
+  let consumerExpense = expenseSummary.totalExpense;
+  let totalSavings = 0;
+  let financialCost = 0;
+  let totalOutflow = 0;
+  let netCashflow = 0;
+
+  if (currentRecord) {
+    totalIncome = (currentRecord.incomes || []).reduce(
+      (sum: number, inc: any) => sum + (Number(inc.amount) || 0),
+      0
+    );
+
+    totalSavings = (currentRecord.savingsInvestments || []).reduce(
+      (sum: number, sav: any) => sum + (Number(sav.amount) || 0),
+      0
+    );
+
+    const loanPayments = GlobalMockDataStore.getMonthlyLoanPayments(year, month);
+    financialCost = loanPayments.reduce(
+      (s, p) => s + (p.actualInterest ?? p.estimatedInterest ?? 0),
+      0
+    );
+
+    totalOutflow = consumerExpense + totalSavings + financialCost;
+    netCashflow = totalIncome - totalOutflow;
+  }
 
   // Get action button label based on status
   const getSettlementButtonText = () => {
     switch (currentStatus) {
       case '진행중':
-        return '결산 계속하기';
+        return `${formattedSelectedMonth} 결산 계속하기`;
       case '완료':
-        return '결산 보기';
+        return `${formattedSelectedMonth} 결산 보기`;
       case '미결산':
       default:
-        return `${currentSettlementStr} 결산 시작`;
+        return `${formattedSelectedMonth} 결산 시작하기`;
     }
   };
 
-  // Get single status badge styling
-  const renderSingleStatusBadge = () => {
+  // Status Badge UI
+  const renderStatusBadge = () => {
     switch (currentStatus) {
       case '완료':
         return (
           <span className="bg-[#e6f4ed] text-[#006c49] border border-[#c3e9d5] font-bold px-3 py-1 rounded-full text-xs flex items-center gap-1 shadow-2xs">
             <span className="w-2 h-2 rounded-full bg-[#006c49]"></span>
-            완료
+            결산완료
           </span>
         );
       case '진행중':
@@ -159,8 +114,24 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   };
 
   return (
-    <div className="space-y-6 pb-28">
-      {/* 1. 최상단: 월간 결산 현황 카드 */}
+    <div className="space-y-5 pb-28">
+      {/* 0. Top Header Bar with Target Month Selector */}
+      <section className="bg-white p-4 rounded-2xl border border-[#c5c5d3]/30 shadow-xs flex items-center justify-between">
+        <div>
+          <h1 className="font-dohyeon text-lg text-[#00236f]">
+            {formattedSelectedMonth} 우리집 현황
+          </h1>
+          <p className="text-xs text-[#757682] mt-0.5 font-medium">
+            전역 기준월 선택에 따른 재정 요약
+          </p>
+        </div>
+        <MonthSelector
+          selectedMonth={selectedMonth}
+          onChangeMonth={setSelectedMonth}
+        />
+      </section>
+
+      {/* 1. 월간 결산 현황 카드 */}
       <section>
         <div
           id="home-monthly-settlement-card"
@@ -176,51 +147,52 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               <div className="w-8 h-8 rounded-xl bg-[#00236f]/10 text-[#00236f] flex items-center justify-center">
                 <span className="material-symbols-outlined text-lg">insert_chart</span>
               </div>
-              <div>
-                <h2 className="font-dohyeon text-lg text-[#00236f] flex items-center gap-2">
-                  월간 결산 현황
-                  <span className="text-xs font-sans font-bold text-[#00236f] bg-[#00236f]/10 px-2 py-0.5 rounded-md">
-                    {currentSettlementStr}
-                  </span>
-                </h2>
-              </div>
+              <h2 className="font-dohyeon text-lg text-[#00236f] flex items-center gap-2">
+                {formattedSelectedMonth} 결산 요약
+              </h2>
             </div>
+            {renderStatusBadge()}
           </div>
 
           <div className="space-y-4">
-            {/* Settlement Status Details Box */}
-            <div className="bg-[#f7f9fb] p-4 rounded-xl border border-[#c5c5d3]/20 space-y-3">
-              {/* Row 1: Target Month & Single Status Badge */}
-              <div className="flex items-center justify-between pb-2.5 border-b border-[#eceef0]">
-                <span className="text-xs font-bold text-[#444651]">결산 상태</span>
-                <div>{renderSingleStatusBadge()}</div>
-              </div>
-
-              {/* Row 2: Currently Displayed Base Data & Last Updated */}
-              <div className="grid grid-cols-2 gap-3 text-xs pt-0.5">
-                <div>
-                  <span className="text-[11px] text-[#757682] block mb-0.5 font-medium">
-                    현재 표시 데이터
-                  </span>
-                  <span className="font-dohyeon text-sm text-[#00236f] flex items-center gap-1">
-                    <span className="material-symbols-outlined text-sm text-[#006c49]">
-                      verified
+            {hasSettlementData ? (
+              <div className="bg-[#f7f9fb] p-4 rounded-xl border border-[#c5c5d3]/20 space-y-3 text-xs">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <span className="text-[11px] text-[#757682] block mb-0.5 font-medium">
+                      확정 총 수입
                     </span>
-                    {cleanBaseMonth} (최근 완료 결산)
-                  </span>
+                    <span className="font-dohyeon text-sm text-[#00236f]">
+                      +{totalIncome.toLocaleString()}원
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[11px] text-[#757682] block mb-0.5 font-medium">
+                      확정 총 지출
+                    </span>
+                    <span className="font-dohyeon text-sm text-[#ba1a1a]">
+                      -{totalOutflow.toLocaleString()}원
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-[11px] text-[#757682] block mb-0.5 font-medium">
-                    마지막 수정
-                  </span>
-                  <span className="font-sans font-semibold text-xs text-[#191c1e]">
-                    {lastUpdated}
-                  </span>
-                </div>
+                {currentRecord?.completedAtDate && (
+                  <div className="pt-2 border-t border-[#eceef0] text-[11px] text-[#757682]">
+                    결산 확정일: {currentRecord.completedAtDate} {currentRecord.completedAtTime || ''}
+                  </div>
+                )}
               </div>
-            </div>
+            ) : (
+              <div className="bg-[#fff7ed] p-4 rounded-xl border border-[#ffedd5] space-y-1.5 text-xs text-center">
+                <p className="font-dohyeon text-sm text-[#c2410c]">
+                  {formattedSelectedMonth} 결산이 아직 완료되지 않았어요
+                </p>
+                <p className="text-[11px] text-[#757682]">
+                  월간결산을 완료하면 {formattedSelectedMonth}의 확정 수입, 지출 및 손익 현황이 여기에 표시됩니다.
+                </p>
+              </div>
+            )}
 
-            {/* Dynamic Settlement Start / Continue / View Button */}
+            {/* Dynamic Settlement Action Button */}
             <button
               onClick={() => onNavigate('2-3')}
               className="w-full py-3.5 bg-[#00236f] text-white font-dohyeon text-sm rounded-xl shadow-md hover:bg-[#1e3a8a] active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
@@ -232,14 +204,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
       </section>
 
-      {/* 2. AI 브리핑 카드 */}
+      {/* 2. AI 월간 리포트 요약 카드 */}
       <section>
         <div
           id="home-ai-briefing-card"
           onClick={() => onNavigate('1-1')}
           className="group bg-[#00236f] text-white p-5 sm:p-6 rounded-2xl shadow-lg border border-transparent hover:border-[#6cf8bb]/40 hover:scale-[1.01] active:scale-[0.98] transition-all cursor-pointer relative overflow-hidden"
         >
-          {/* Subtle background glow pattern */}
           <div className="absolute -right-8 -top-8 opacity-10 pointer-events-none group-hover:scale-110 group-hover:opacity-15 transition-all">
             <span className="material-symbols-outlined text-[160px]">smart_toy</span>
           </div>
@@ -253,11 +224,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 magic_button
               </span>
               <span className="font-label-md text-xs font-bold text-[#6ffbbe] uppercase tracking-wider">
-                AI 월간 리포트
+                {formattedSelectedMonth} AI 리포트
               </span>
             </div>
 
-            {/* Click CTA Badge */}
             <span className="bg-[#6cf8bb] text-[#00236f] font-dohyeon text-xs px-3 py-1 rounded-full shadow-xs flex items-center gap-1 group-hover:bg-white transition-colors">
               리포트 보기
               <span className="material-symbols-outlined text-sm transition-transform group-hover:translate-x-0.5">
@@ -266,32 +236,38 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             </span>
           </div>
 
-          <h2 className="font-dohyeon text-2xl mb-2.5 leading-snug group-hover:text-[#6cf8bb] transition-colors">
-            {netCashflow > 0
-              ? '이번 달은 흑자를 유지하고 있습니다'
-              : netCashflow === 0
-              ? '이번 달 수입과 지출 균형 상태입니다'
-              : '이번 달 지출 관리가 필요한 상태입니다'}
-          </h2>
+          {hasSettlementData ? (
+            <>
+              <h2 className="font-dohyeon text-2xl mb-2.5 leading-snug group-hover:text-[#6cf8bb] transition-colors">
+                {netCashflow > 0
+                  ? `${formattedSelectedMonth}은 흑자를 유지하고 있습니다`
+                  : netCashflow === 0
+                  ? `${formattedSelectedMonth} 수입과 지출 균형 상태입니다`
+                  : `${formattedSelectedMonth} 지출 관리가 필요한 상태입니다`}
+              </h2>
 
-          <div className="flex justify-between items-end pt-1">
-            <p className="font-body-sm text-sm text-white/90 max-w-[80%] leading-relaxed">
-              {netCashflow > 0
-                ? `월 순현금흐름 +${netCashflow.toLocaleString()}원으로 안정적인 자산 축적이 진행 중입니다.`
-                : netCashflow === 0
-                ? '등록된 자산, 부채, 수입, 고정지출 정보를 바탕으로 자산을 종합 관리합니다.'
-                : `월 순현금흐름이 -${Math.abs(netCashflow).toLocaleString()}원으로 지출 점검이 필요합니다.`}
-            </p>
-            <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center shrink-0 group-hover:bg-[#6cf8bb] group-hover:text-[#00236f] transition-all">
-              <span className="material-symbols-outlined text-lg transition-transform group-hover:translate-x-0.5">
-                chevron_right
-              </span>
+              <p className="font-body-sm text-sm text-white/90 leading-relaxed">
+                {netCashflow > 0
+                  ? `${formattedSelectedMonth} 순현금흐름 +${netCashflow.toLocaleString()}원으로 자산 축적이 진행 중입니다.`
+                  : netCashflow === 0
+                  ? `${formattedSelectedMonth} 확정 데이터를 바탕으로 종합 자산을 관리합니다.`
+                  : `${formattedSelectedMonth} 순현금흐름 -${Math.abs(netCashflow).toLocaleString()}원으로 지출 점검이 필요합니다.`}
+              </p>
+            </>
+          ) : (
+            <div className="py-2 space-y-1">
+              <h2 className="font-dohyeon text-lg text-[#6ffbbe]">
+                {formattedSelectedMonth} AI 월간리포트가 아직 생성되지 않았어요
+              </h2>
+              <p className="text-xs text-white/80">
+                월간결산을 진행하면 {formattedSelectedMonth} 확정 데이터를 기반으로 AI 리포트가 자동 생성됩니다.
+              </p>
             </div>
-          </div>
+          )}
         </div>
       </section>
 
-      {/* 3. 순현금흐름 카드 & 이번 달 지출 카드 & 다가오는 일정 */}
+      {/* 3. 순현금흐름 카드 & 고정지출 카드 & 다가오는 일정 */}
       <section className="grid grid-cols-2 gap-4">
         {/* 순현금흐름 카드 */}
         <div
@@ -301,50 +277,79 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         >
           <div className="flex justify-between items-center">
             <span className="text-[#444651] font-label-md text-xs uppercase tracking-wider">
-              순현금흐름 (NET FLOW)
+              {formattedSelectedMonth} 순현금흐름
+            </span>
+            <span className="text-[10px] font-bold text-[#757682] bg-[#f0f4fd] px-2 py-0.5 rounded">
+              {hasSettlementData ? '확정 데이터' : '결산 미완료'}
             </span>
           </div>
 
           <div className="mt-2">
-            <span
-              className={`font-body-lg font-bold text-3xl tracking-tight ${
-                netCashflow >= 0 ? 'text-[#006c49]' : 'text-[#ba1a1a]'
-              }`}
-            >
-              {netCashflow >= 0 ? '+' : ''}
-              {netCashflow.toLocaleString()}원
-            </span>
-            <div className="w-full bg-[#eceef0] mt-3 h-2.5 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full ${
-                  netCashflow >= 0 ? 'bg-[#006c49] w-[75%]' : 'bg-[#ba1a1a] w-[40%]'
-                }`}
-              />
-            </div>
+            {hasSettlementData ? (
+              <>
+                <span
+                  className={`font-body-lg font-bold text-3xl tracking-tight ${
+                    netCashflow >= 0 ? 'text-[#006c49]' : 'text-[#ba1a1a]'
+                  }`}
+                >
+                  {netCashflow >= 0 ? '+' : ''}
+                  {netCashflow.toLocaleString()}원
+                </span>
+                <div className="w-full bg-[#eceef0] mt-3 h-2.5 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${
+                      netCashflow >= 0 ? 'bg-[#006c49] w-[75%]' : 'bg-[#ba1a1a] w-[40%]'
+                    }`}
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="py-1">
+                <span className="font-dohyeon text-lg text-[#757682] block">
+                  결산 정보 없음
+                </span>
+                <span className="text-[11px] text-[#757682]">
+                  {formattedSelectedMonth} 결산을 먼저 완료해 주세요.
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* 이번 달 지출 카드 */}
+        {/* 선택월 소비 지출 카드 */}
         <div
           id="home-spending-card"
           onClick={() => onNavigate('2-1')}
           className="bg-white p-5 rounded-2xl shadow-[0_4px_12px_rgba(0,35,111,0.05)] border border-[#c5c5d3]/20 flex flex-col justify-between h-42 cursor-pointer hover:border-[#00236f]/30 transition-all"
         >
           <div className="flex justify-between items-center">
-            <span className="text-[#444651] font-label-md text-xs">고정지출 현황</span>
+            <span className="text-[#444651] font-label-md text-xs">{formattedSelectedMonth} 소비 지출</span>
           </div>
           <div className="mt-2">
-            <span className="font-dohyeon text-xl text-[#191c1e] block">
-              {totalSpending.toLocaleString()}원
-            </span>
-            <span className="text-[#00236f] font-label-md text-[11px] flex items-center gap-0.5 mt-2 bg-[#1e3a8a]/10 px-2 py-0.5 rounded-md w-fit font-semibold">
-              <span className="material-symbols-outlined text-sm">payments</span>
-              {totalSpending > 0 ? '고정지출 반영' : '지출 내역 없음'}
-            </span>
+            {hasSettlementData ? (
+              <>
+                <span className="font-dohyeon text-xl text-[#191c1e] block">
+                  {consumerExpense.toLocaleString()}원
+                </span>
+                <span className="text-[#00236f] font-label-md text-[11px] flex items-center gap-0.5 mt-2 bg-[#1e3a8a]/10 px-2 py-0.5 rounded-md w-fit font-semibold">
+                  <span className="material-symbols-outlined text-sm">payments</span>
+                  소비지출 반영
+                </span>
+              </>
+            ) : (
+              <div>
+                <span className="font-dohyeon text-sm text-[#757682] block">
+                  내역 미확정
+                </span>
+                <span className="text-[10px] text-[#757682] mt-1 block">
+                  결산 진행 필요
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* 다가오는 일정 */}
+        {/* 다가오는 일정 (독립 유지) */}
         <div
           id="home-schedule-card"
           onClick={() => onNavigate('4-1')}
@@ -383,7 +388,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
 
         <div className="grid grid-cols-2 gap-3.5">
-          {/* AI Briefing Card */}
           <button
             id="quick-menu-briefing"
             onClick={() => onNavigate('1-1')}
@@ -405,12 +409,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 AI 브리핑
               </span>
               <p className="font-body-sm text-xs text-[#757682] line-clamp-1">
-                일간/월간 리포트 분석
+                {formattedSelectedMonth} 리포트 분석
               </p>
             </div>
           </button>
 
-          {/* AI Question Card */}
           <button
             id="quick-menu-question"
             onClick={() => onNavigate('1-2')}

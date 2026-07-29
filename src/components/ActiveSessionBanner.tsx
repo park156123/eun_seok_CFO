@@ -1,50 +1,78 @@
 import React, { useState, useEffect } from 'react';
-import { GlobalMockDataStore, ConsumerSpendingSummary } from '../services/dataStore';
+import { useSelectedMonth } from '../context/SelectedMonthContext';
+import { GlobalMockDataStore } from '../services/dataStore';
+import { getCsvSessionForMonth, getExpenseSummaryForMonth, MonthCsvSessionInfo, ExpenseSummaryResult } from '../utils/monthDataSelectors';
 
 interface ActiveSessionBannerProps {
   onStartNewAnalysis?: () => void;
   onConfirmSettlement?: () => void;
+  onNavigateToSettlement?: () => void;
   showActions?: boolean;
+  selectedMonthStr?: string;
 }
 
 export const ActiveSessionBanner: React.FC<ActiveSessionBannerProps> = ({
   onStartNewAnalysis,
   onConfirmSettlement,
+  onNavigateToSettlement,
   showActions = true,
+  selectedMonthStr,
 }) => {
-  const [summary, setSummary] = useState<ConsumerSpendingSummary>(() =>
-    GlobalMockDataStore.getConsumerSpendingSummary()
+  const { selectedMonth: contextMonth, formattedSelectedMonth: contextFormatted } = useSelectedMonth();
+  const currentMonthStr = selectedMonthStr || contextMonth;
+
+  const [sessionInfo, setSessionInfo] = useState<MonthCsvSessionInfo>(() =>
+    getCsvSessionForMonth(currentMonthStr)
+  );
+  const [summary, setSummary] = useState<ExpenseSummaryResult>(() =>
+    getExpenseSummaryForMonth(currentMonthStr)
   );
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   useEffect(() => {
-    const updateSummary = () => {
-      setSummary(GlobalMockDataStore.getConsumerSpendingSummary());
+    const update = () => {
+      setSessionInfo(getCsvSessionForMonth(currentMonthStr));
+      setSummary(getExpenseSummaryForMonth(currentMonthStr));
     };
-    updateSummary();
+    update();
     const unsubscribe = GlobalMockDataStore.subscribe(() => {
-      updateSummary();
+      update();
     });
     return () => unsubscribe();
-  }, []);
+  }, [currentMonthStr]);
 
-  const sessionInfo = summary.activeSessionInfo;
+  const formattedMonth = summary.formattedSelectedMonth || contextFormatted;
 
-  if (!sessionInfo && summary.totalSessionRawCount === 0) {
+  if (!sessionInfo.hasCsvSession) {
     return (
-      <div className="bg-[#f0f4fd] border border-[#00236f]/15 rounded-2xl p-4 flex flex-col sm:flex-row justify-between items-center gap-3 text-xs mb-4 shadow-2xs">
-        <div className="flex items-center gap-2 text-[#00236f]">
-          <span className="material-symbols-outlined text-lg">info</span>
-          <span className="font-medium">
-            현재 활성화된 CSV 분석 세션이 없습니다. [월간결산] 화면에서 CSV를 업로드하면 소비 분석이 시작됩니다.
-          </span>
+      <div className="bg-[#fff7ed] border border-[#ffedd5] rounded-2xl p-4 flex flex-col sm:flex-row justify-between items-center gap-3 text-xs mb-5 shadow-2xs">
+        <div className="flex items-center gap-2.5 text-[#c2410c]">
+          <span className="material-symbols-outlined text-2xl shrink-0">upload_file</span>
+          <div>
+            <span className="font-dohyeon text-sm text-[#191c1e] block">
+              {formattedMonth} CSV가 아직 업로드되지 않았습니다.
+            </span>
+            <span className="text-[11px] text-[#757682] block mt-0.5">
+              {formattedMonth} 카드/통장 내역 CSV를 업로드하면 소비 자동 분류 및 결산 분석이 시작됩니다.
+            </span>
+          </div>
         </div>
+        {onNavigateToSettlement && (
+          <button
+            type="button"
+            onClick={onNavigateToSettlement}
+            className="px-3.5 py-1.5 bg-[#00236f] text-white hover:bg-[#1e3a8a] text-xs font-dohyeon rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0 shadow-2xs"
+          >
+            <span className="material-symbols-outlined text-sm">cloud_upload</span>
+            {formattedMonth} CSV 업로드
+          </button>
+        )}
       </div>
     );
   }
 
   const handleResetSession = () => {
-    if (window.confirm('현재 임시 CSV 분석 세션을 초기화하고 새 분석을 시작하시겠습니까?\n(기본 정보, 수입원, 자산/부채, 분류 규칙, 과거 확정 결산은 유지됩니다.)')) {
+    if (window.confirm(`${formattedMonth} CSV 분석 세션을 초기화하고 새 분석을 시작하시겠습니까?\n(기본 정보, 수입원, 자산/부채, 분류 규칙, 과거 확정 결산은 유지됩니다.)`)) {
       GlobalMockDataStore.resetCurrentCsvSession();
       if (onStartNewAnalysis) {
         onStartNewAnalysis();
@@ -60,9 +88,9 @@ export const ActiveSessionBanner: React.FC<ActiveSessionBannerProps> = ({
             analytics
           </span>
           <span className="font-dohyeon text-sm text-[#00236f]">
-            현재 CSV 분석 세션 정보
+            {formattedMonth} CSV 분석 세션 정보
           </span>
-          {sessionInfo?.sourceFileName && (
+          {sessionInfo.sourceFileName && (
             <span className="bg-[#00236f] text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full">
               {sessionInfo.sourceFileName}
             </span>
@@ -87,7 +115,7 @@ export const ActiveSessionBanner: React.FC<ActiveSessionBannerProps> = ({
                 className="px-3 py-1.5 bg-[#00236f] text-white hover:bg-[#1e3a8a] text-xs font-dohyeon rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
               >
                 <span className="material-symbols-outlined text-sm">task_alt</span>
-                이번 달 결산 확정
+                {formattedMonth} 결산 확정
               </button>
             )}
           </div>
@@ -99,14 +127,14 @@ export const ActiveSessionBanner: React.FC<ActiveSessionBannerProps> = ({
         <div className="bg-white p-2.5 rounded-xl border border-[#c5c5d3]/20">
           <span className="text-[10px] text-[#757682] block">업로드 일시</span>
           <span className="font-bold text-[#191c1e] text-xs mt-0.5 block truncate">
-            {sessionInfo?.importedAt || '정보 없음'}
+            {sessionInfo.importedAt || '정보 없음'}
           </span>
         </div>
 
         <div className="bg-white p-2.5 rounded-xl border border-[#c5c5d3]/20">
           <span className="text-[10px] text-[#757682] block">분석 대상 기간</span>
           <span className="font-bold text-[#191c1e] text-xs mt-0.5 block truncate">
-            {sessionInfo?.dateRange || '기간 정보 없음'}
+            {sessionInfo.dateRange || '기간 정보 없음'}
           </span>
         </div>
 
@@ -134,12 +162,12 @@ export const ActiveSessionBanner: React.FC<ActiveSessionBannerProps> = ({
             <div className="flex items-center gap-2 text-[#00236f]">
               <span className="material-symbols-outlined text-2xl">verified</span>
               <h3 className="font-dohyeon text-base text-[#191c1e]">
-                이번 달 결산 확정
+                {formattedMonth} 결산 확정
               </h3>
             </div>
 
             <p className="text-xs text-[#444651] leading-relaxed">
-              현재 분석 중인 <strong className="text-[#00236f]">{summary.totalCount}건 ({summary.totalExpense.toLocaleString()}원)</strong>의 거래 데이터를 해당 월의 확정 월간결산 기록으로 저장하시겠습니까?
+              현재 분석 중인 <strong className="text-[#00236f]">{summary.totalCount}건 ({summary.totalExpense.toLocaleString()}원)</strong>의 거래 데이터를 {formattedMonth} 확정 월간결산 기록으로 저장하시겠습니까?
             </p>
 
             <div className="bg-[#f0f4fd] p-3 rounded-xl border border-[#00236f]/15 text-xs space-y-1">

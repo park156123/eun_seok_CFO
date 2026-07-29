@@ -42,6 +42,7 @@ import {
 } from '../data/ruleLoader';
 import { calculateCurrentDebtPayment } from '../utils/debtCalculator';
 import { normalizeIncomeSource } from '../utils/incomeUtils';
+import { isConsumerTransaction } from '../utils/consumerExpenseUtils';
 
 import {
   normalizeMerchantName,
@@ -1358,20 +1359,7 @@ class GlobalMockDataStoreImpl implements IDataStore {
       sessionTxs = allTxs.filter((t) => t.importSessionId === activeSessionId);
     }
 
-    const includedTxs = sessionTxs.filter((t) => {
-      if (t.analysisStatus === 'excluded' || t.analysisStatus === 'pending') {
-        return false;
-      }
-      if (t.isIncome) return false;
-      if (t.classification) {
-        if (t.classification.classificationType === 'excluded') return false;
-        if (!t.classification.included) return false;
-        if (t.classification.needsConfirmation && t.needsReview) return false;
-      }
-      const cat = t.category || '';
-      if (cat.startsWith('제외') || cat.includes('내부이체')) return false;
-      return (Number(t.amount) || 0) > 0;
-    });
+    const includedTxs = sessionTxs.filter(isConsumerTransaction);
 
     const excludedTxs = sessionTxs.filter((t) => {
       if (t.analysisStatus === 'excluded') return true;

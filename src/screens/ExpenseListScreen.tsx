@@ -3,37 +3,47 @@ import { Transaction } from '../types';
 import { CONSUMER_CATEGORY_GROUPS, getCategoryGroup, parseCategoryString } from '../data/consumerCategories';
 import { GlobalMockDataStore } from '../services/dataStore';
 import { ActiveSessionBanner } from '../components/ActiveSessionBanner';
+import { isConsumerTransaction } from '../utils/consumerExpenseUtils';
+import { useSelectedMonth } from '../context/SelectedMonthContext';
+import { MonthSelector } from '../components/MonthSelector';
+import { getTransactionsForMonth } from '../utils/monthDataSelectors';
 
 interface ExpenseListScreenProps {
   transactions: Transaction[];
   onUpdateTransaction: (updated: Transaction) => void;
   onDeleteTransaction: (id: string) => void;
+  initialCategoryFilter?: string | null;
+  onClearCategoryFilter?: () => void;
 }
 
 export const ExpenseListScreen: React.FC<ExpenseListScreenProps> = ({
-  transactions,
   onUpdateTransaction,
   onDeleteTransaction,
+  initialCategoryFilter,
 }) => {
+  const { selectedMonth, setSelectedMonth, formattedSelectedMonth } = useSelectedMonth();
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
   const [selectedMajor, setSelectedMajor] = useState<string>('식비');
   const [selectedMinor, setSelectedMinor] = useState<string>('외식');
+  const [activeCategoryFilter, setActiveCategoryFilter] = useState<string>(
+    initialCategoryFilter || '전체'
+  );
 
-  // Filter transactions for current active session
-  const activeSessionTxs = GlobalMockDataStore.getActiveSessionTransactions();
-  const displayTxs = activeSessionTxs.length > 0 ? activeSessionTxs : transactions;
+  // Filter transactions strictly by selected month using central selector
+  const displayTxs = getTransactionsForMonth(selectedMonth);
+  const includedTxs = displayTxs.filter(isConsumerTransaction);
 
-  const includedTxs = displayTxs.filter((t) => {
-    if (t.analysisStatus === 'excluded') return false;
-    const cat = t.category || '';
-    if (cat.startsWith('제외') || cat.includes('내부이체')) return false;
-    return !t.isIncome && (Number(t.amount) || 0) > 0;
+  const categoryFilteredTxs = includedTxs.filter((t) => {
+    if (activeCategoryFilter === '전체') return true;
+    const { major } = parseCategoryString(t.category);
+    return major === activeCategoryFilter;
   });
 
-  const totalExpense = includedTxs.reduce((sum, t) => sum + t.amount, 0);
+  const totalExpense = categoryFilteredTxs.reduce((sum, t) => sum + t.amount, 0);
 
   // Group by date
-  const groupedDates = Array.from(new Set(includedTxs.map((t) => t.date)));
+  const groupedDates = Array.from(new Set(categoryFilteredTxs.map((t) => t.date)));
+
 
   const handleStartEdit = (tx: Transaction) => {
     setEditingTx(tx);
@@ -71,22 +81,58 @@ export const ExpenseListScreen: React.FC<ExpenseListScreenProps> = ({
 
   return (
     <div className="space-y-4 pb-28">
+      {/* 0. Top Header Bar with Month Selector */}
+      <section className="bg-white p-4 rounded-2xl border border-[#c5c5d3]/30 shadow-xs flex items-center justify-between">
+        <div>
+          <h1 className="font-dohyeon text-lg text-[#00236f]">
+            {formattedSelectedMonth} 지출 내역
+          </h1>
+          <p className="text-xs text-[#757682] mt-0.5 font-medium">
+            선택월 거래 내역 조회 및 분류 관리
+          </p>
+        </div>
+        <MonthSelector
+          selectedMonth={selectedMonth}
+          onChangeMonth={setSelectedMonth}
+        />
+      </section>
+
       {/* Active Session Info Banner (Requirement 3) */}
       <ActiveSessionBanner showActions={true} />
 
       {/* Header Summary */}
       <div className="my-2 bg-white p-5 rounded-2xl shadow-xs border border-[#c5c5d3]/20 flex justify-between items-center">
         <div>
-          <p className="font-label-md text-xs text-[#757682] mb-1">현재 세션 총 소비 지출</p>
+          <p className="font-label-md text-xs text-[#757682] mb-1">
+            {activeCategoryFilter === '전체' ? `${formattedSelectedMonth} 총 소비 지출` : `${formattedSelectedMonth} '${activeCategoryFilter}' 소비 지출`}
+          </p>
           <h2 className="font-dohyeon text-2xl text-[#00236f]">
             -{totalExpense.toLocaleString()}원
           </h2>
         </div>
         <div className="text-right">
           <span className="px-3 py-1 bg-[#00236f]/10 text-[#00236f] text-xs font-bold rounded-full">
-            소비 포함 {includedTxs.length}건
+            {categoryFilteredTxs.length}건
           </span>
         </div>
+      </div>
+
+      {/* Category Filter Pills */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs">
+        {['전체', '식비', '생활', '가족', '건강', '이동', '통신', '보험', '기타'].map((cat) => (
+          <button
+            key={cat}
+            type="button"
+            onClick={() => setActiveCategoryFilter(cat)}
+            className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition-all cursor-pointer ${
+              activeCategoryFilter === cat
+                ? 'bg-[#00236f] text-white shadow-xs'
+                : 'bg-white text-[#757682] border border-[#c5c5d3]/30 hover:bg-[#f2f4f6]'
+            }`}
+          >
+            {cat}
+          </button>
+        ))}
       </div>
 
       {/* Transaction List */}
@@ -95,11 +141,15 @@ export const ExpenseListScreen: React.FC<ExpenseListScreenProps> = ({
           <div className="bg-white rounded-2xl p-8 text-center border border-[#c5c5d3]/20 text-[#757682]">
             <span className="material-symbols-outlined text-4xl mb-2 text-[#c5c5d3]">receipt_long</span>
             <p className="text-sm font-medium">소비로 집계된 지출 내역이 없습니다.</p>
-            <p className="text-xs text-[#909090] mt-1">월간결산 메뉴에서 CSV 파일을 업로드하거나 거래를 등록하세요.</p>
+            <p className="text-xs text-[#909090] mt-1">
+              {activeCategoryFilter !== '전체'
+                ? `'${activeCategoryFilter}' 카테고리에 해당하는 거래가 없습니다.`
+                : '월간결산 메뉴에서 CSV 파일을 업로드하거나 거래를 등록하세요.'}
+            </p>
           </div>
         ) : (
           groupedDates.map((dateStr) => {
-            const itemsOnDate = includedTxs.filter((t) => t.date === dateStr);
+            const itemsOnDate = categoryFilteredTxs.filter((t) => t.date === dateStr);
             return (
               <div key={dateStr} className="space-y-2">
                 <p className="font-label-md text-xs text-[#757682] py-1 border-b border-[#c5c5d3]/20 font-semibold px-1">
