@@ -1,0 +1,6 @@
+{
+  "name": "우리집 CFO",
+  "description": "가족과 개인사업자를 위한 AI 재무관리 개인 CFO 앱",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,436 @@
+export type ScreenId =
+  | '0-0' // 초기 설정 온보딩
+  | '1-0' // 홈 메인
+  | '1-1' // AI 브리핑
+  | '1-2' // AI 질문
+  | '2-0' // 가계부 메인
+  | '2-1' // 지출내역
+  | '2-2' // 소비분석
+  | '2-3' // 월간결산
+  | '3-0' // 자산 메인
+  | '3-1' // 자산·부채
+  | '3-2' // 현금흐름
+  | '4-0' // 플래너 메인
+  | '4-1' // 미래 일정
+  | '4-2'; // 목표·시뮬레이션
+
+export type MainTab = 'home' | 'ledger' | 'assets' | 'planner';
+
+export type ExpenseType = 'living' | 'business'; // 생활비 vs 사업비
+
+export interface Transaction {
+  id: string;
+  date: string; // e.g., '10월 24일' or '2024-10-24'
+  time: string; // e.g., '오후 2:30'
+  merchant: string; // 거래처 (e.g., '스타벅스 선릉점')
+  amount: number; // e.g., 5600
+  type: ExpenseType; // 'living' (생활비) or 'business' (사업비)
+  category: string; // e.g., '식비', '생활', '교통', '주거/통신', '사업비'
+  icon: string; // Material symbol icon name
+  isIncome?: boolean; // false for expense, true for income
+  memo?: string;
+
+  // 자동분류 및 월간결산 확장 필드
+  merchantOriginal?: string;
+  classification?: ClassificationResult;
+  userConfirmed?: boolean;
+  transactionFingerprint?: string;
+  isDuplicate?: boolean;
+  settlementYear?: number;
+  settlementMonth?: number;
+}
+
+export interface Asset {
+  id: string;
+  name: string; // e.g., '[현하우스]'
+  category: '부동산' | '금융자산' | '사업자산' | '기타';
+  amount: number; // e.g., 1600000000
+  monthlyIncome?: number; // e.g., 7800000
+  connectedDebt?: number; // e.g., 520000000
+  realNetWorth?: number; // e.g., 1080000000
+  status?: string; // e.g., '정상', '시세 업데이트 필요'
+  icon?: string;
+}
+
+export type RepaymentType =
+  | 'interest_only'
+  | 'bullet'
+  | 'equal_principal'
+  | 'equal_payment'
+  | 'stepped'
+  | 'custom';
+
+export interface RepaymentPhase {
+  id?: string;
+  phaseName: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  repaymentType: RepaymentType | string;
+  annualRate: number;
+  rateType?: '고정금리' | '변동금리' | '혼합금리';
+  termMonths?: number;
+  paymentDay?: string;
+  manualPrincipalPayment?: number;
+  manualInterestPayment?: number;
+  manualTotalPayment?: number;
+  memo?: string;
+}
+
+export interface Debt {
+  id: string;
+  name: string; // e.g., '[현하우스 담보대출]'
+  amount: number; // e.g., 520000000
+  rate: number; // e.g., 4.0
+  rateType: '변동금리' | '고정금리' | '혼합금리' | '무이자';
+  monthlyPayment: number; // 원리금 e.g., 3200000
+  principalRepayment?: number; // 상환 원금 e.g., 1800000
+  interestPayment?: number; // 상환 이자 e.g., 1400000
+  dDay?: string; // e.g., 'D-8'
+  nextDueDate?: string; // e.g., '11.25'
+  connectedAsset?: string; // e.g., '현하우스'
+  
+  // 계산 기준 및 상세 필드
+  calculationMode?: 'contract' | 'current_status';
+  originalPrincipal?: number;
+  currentBalance?: number;
+  loanStartDate?: string;
+  principalRepaymentStartDate?: string;
+  maturityDate?: string;
+  rateEffectiveDate?: string;
+  repaymentType?: RepaymentType;
+  annualRate?: number;
+  repaymentStartDate?: string;
+  remainingMonths?: number;
+  paymentDay?: string;
+  currentPrincipalPayment?: number;
+  currentInterestPayment?: number;
+  currentTotalPayment?: number;
+  calculatedPrincipalPayment?: number;
+  calculatedInterestPayment?: number;
+  calculatedMonthlyPayment?: number;
+  manualPaymentOverride?: boolean;
+  manualPrincipalPayment?: number;
+  manualInterestPayment?: number;
+  manualTotalPayment?: number;
+  manualMonthlyPayment?: number;
+  repaymentPhases?: RepaymentPhase[];
+  calculationBaseDate?: string;
+}
+
+export interface Goal {
+  id: string;
+  title: string; // e.g., '가족 해외여행', '내 집 마련 (대출 상환)', '노후 자금 마련'
+  category: '여행' | '대출상환' | '노후' | '차량' | '기타';
+  targetAmount: number; // e.g., 8000000
+  currentAmount: number; // e.g., 3600000
+  progressPercentage: number; // e.g., 45
+  memo?: string; // e.g., '내년 환갑 기념 부모님과 함께하는 다낭 4박 5일 여행...'
+  icon?: string;
+}
+
+export interface ScheduleEvent {
+  id: string;
+  title: string; // e.g., '차량 교체', '금강아파트 원리금 상환', '가족 여행'
+  date: string; // e.g., '2027.01', '2024.10.15'
+  amount: number; // e.g., 45000000
+  isPrimary?: boolean; // e.g., PRIMARY badge
+  memo?: string;
+  categoryIcon?: string; // e.g., 'directions_car', 'house'
+  dDay?: string; // e.g., 'D-3'
+}
+
+export interface ChatMessage {
+  id: string;
+  sender: 'user' | 'ai';
+  text: string;
+  time: string;
+}
+
+export interface SettlementData {
+  hasData: boolean;
+  targetMonth: string; // e.g., '2026년 8월'
+  status?: '미결산' | '진행중' | '완료';
+  baseMonth?: string; // e.g., '2026년 7월 결산'
+  transactionCount?: number; // e.g., 328
+  lastUpdated: string; // e.g., '2026-08-02'
+}
+
+// 초기 설정 Onboarding 데이터 모델
+export interface FamilyMember {
+  id: string;
+  name: string;
+  relationship: '본인' | '배우자' | '자녀' | '부모' | '기타';
+  birthDate: string; // e.g., '2018-03-15'
+  calculatedAge: number; // 만 나이
+  memo?: string;
+}
+
+export type IncomeType = '사업소득' | '임대소득' | '근로소득' | '금융소득' | '기타소득' | '기타';
+export type IncomeMode = 'fixed' | 'variable';
+
+export interface IncomeSource {
+  id: string;
+  name?: string;
+  incomeName: string;
+  incomeType: IncomeType;
+  incomeMode: IncomeMode;
+  fixedMonthlyIncome?: number | null;
+  legacyMonthlyIncome?: number;
+  previousRegisteredIncome?: number;
+  monthlyIncome?: number;
+  owner?: string;
+  memo?: string;
+  isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface OnboardingAsset {
+  id: string;
+  assetName: string;
+  assetType: '부동산' | '금융자산' | '현금' | '기타자산';
+  currentValue: number;
+  memo?: string;
+}
+
+export interface OnboardingDebt {
+  id: string;
+  debtName: string;
+  debtType:
+    | '주택담보대출'
+    | '상가·부동산 담보대출'
+    | '사업자대출'
+    | '신용대출'
+    | '마이너스통장'
+    | '자동차대출'
+    | '전세대출'
+    | '가족·지인 차입금'
+    | '기타';
+  lender: string;
+  currentBalance: number;
+  interestRate: number;
+  monthlyPayment: number;
+  paymentDay: string;
+  repaymentMethod: '원리금균등' | '원금균등' | '만기일시상환' | '이자만 납부' | '단계별 상환' | '직접설정';
+  
+  // 계산 및 상세 설정 추가 필드
+  calculationMode?: 'contract' | 'current_status';
+  originalPrincipal?: number;
+  loanStartDate?: string;
+  principalRepaymentStartDate?: string;
+  rateType?: '고정금리' | '변동금리' | '혼합금리';
+  rateEffectiveDate?: string;
+  repaymentType?: RepaymentType;
+  annualRate?: number;
+  repaymentStartDate?: string;
+  maturityDate?: string;
+  remainingMonths?: number;
+  currentPrincipalPayment?: number;
+  currentInterestPayment?: number;
+  currentTotalPayment?: number;
+  calculatedPrincipalPayment?: number;
+  calculatedInterestPayment?: number;
+  calculatedMonthlyPayment?: number;
+  manualPaymentOverride?: boolean;
+  manualPrincipalPayment?: number;
+  manualInterestPayment?: number;
+  manualTotalPayment?: number;
+  manualMonthlyPayment?: number;
+  repaymentPhases?: RepaymentPhase[];
+  calculationBaseDate?: string;
+
+  principalStartDate?: string;
+  customSchedule?: string;
+  memo?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OnboardingGoal {
+  id: string;
+  goalName: string;
+  goalType: '부채상환' | '내집마련' | '비상금' | '투자' | '교육' | '은퇴' | '여행' | '기타';
+  targetAmount: number;
+  targetDate?: string;
+  memo?: string;
+}
+
+// 5. 고정지출
+export interface FixedExpenseItem {
+  id: string;
+  name: string;
+  category: '주거/공과금' | '대출원리금' | '보험료' | '구독료' | '교육비' | '기타';
+  monthlyAmount: number;
+  paymentDay?: string;
+  memo?: string;
+}
+
+// 6. 금융상품
+export interface FinancialProductItem {
+  id: string;
+  name: string;
+  productType: '예적금' | '주식/ETF' | '펀드' | '연금' | '코인' | '기타';
+  institution?: string;
+  balance: number;
+  interestRate?: number;
+  maturityDate?: string;
+  memo?: string;
+}
+
+// 8. 사업정보
+export interface BusinessInfo {
+  businessName: string;
+  businessType: '개인사업자' | '법인사업자' | '프리랜서' | '해당없음';
+  monthlyRevenue?: number;
+  monthlyExpense?: number;
+  memo?: string;
+}
+
+// 1. 사용자 정보
+export interface UserInfo {
+  profileName: string;
+  email: string;
+  householdName: string;
+  familyMembers: FamilyMember[];
+}
+
+// 자동분류 규칙 데이터 모델
+export type MatchType = 'exact' | 'alias' | 'keyword' | 'contains';
+export type RuleConfidence = 'confirmed' | 'high' | 'medium' | 'low';
+export type RuleSource = 'initial-master' | 'user-confirmed' | 'keyword-rule' | 'ai-suggested' | string;
+
+export interface MerchantRule {
+  id: string;
+  merchantMaster: string; // 대표 거래처명
+  patterns: string[]; // 매칭 패턴 리스트
+  matchType: MatchType;
+  majorCategory: string; // 대분류
+  minorCategory: string; // 소분류
+  included: boolean; // 가계 소비 지출 포함 여부
+  confidence: RuleConfidence;
+  autoConfirm?: boolean;
+  memo?: string;
+  source: RuleSource;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CategoryRule {
+  id: string;
+  keyword?: string;
+  keywords?: string[];
+  majorCategory: string;
+  minorCategory: string;
+  priority: number;
+  confidence: RuleConfidence;
+  autoConfirm?: boolean;
+  memo?: string;
+  isActive: boolean;
+}
+
+export interface ExclusionRule {
+  id: string;
+  patterns: string[];
+  matchType: MatchType | 'contains';
+  exclusionType: string; // e.g., '내부이체', '법인거래 제외', '확인 불가', '원금상환' 등
+  exclusionReason: string;
+  dashboardTreatment: 'exclude' | 'include' | 'separate';
+  debtTreatment?: 'none' | 'principal_repayment' | string;
+  confidence?: RuleConfidence;
+  autoConfirm?: boolean;
+  source?: string;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type ExclusionReasonCode =
+  | 'internal_transfer'
+  | 'business_transaction'
+  | 'debt_principal_repayment'
+  | 'asset_transfer'
+  | 'income'
+  | 'unknown';
+
+export interface ClassificationResult {
+  merchantOriginal: string; // 원본 거래처명 (절대 변경 안 됨)
+  merchantNormalized: string; // 정규화된 거래처명
+  merchantMaster?: string | null; // 대표 거래처명
+  classificationType: 'consumer' | 'excluded'; // 1차 분류
+  majorCategory: string | null;
+  minorCategory: string | null;
+  exclusionReason: ExclusionReasonCode | null;
+  exclusionType?: string | null; // 표시용 (e.g. "내부이체", "사업거래" 등)
+  included: boolean; // consumer = true, excluded = false
+  dashboardTreatment?: 'exclude' | 'include' | 'separate';
+  debtTreatment?: string | null;
+  confidence: RuleConfidence;
+  needsConfirmation: boolean; // 확인 필요 여부
+  appliedRuleId?: string | null;
+  appliedRuleType?: 'user-confirmed' | 'exclusion' | 'exact-merchant' | 'alias' | 'keyword' | 'category' | 'industry' | 'pattern' | 'ai-recommend' | 'none' | null;
+  userConfirmed?: boolean;
+  reviewCompleted?: boolean;
+  classificationStatus?: 'auto_confirmed' | 'needs_review' | 'user_confirmed' | string;
+  userQuestion?: string | null;
+}
+
+// 기타 설정 선호도
+export interface UserPreferences {
+  theme: 'light' | 'dark' | 'system';
+  currency: 'KRW' | 'USD';
+  notificationEnabled: boolean;
+}
+
+export interface IncomeRecord {
+  id: string;
+  incomeSourceId: string;
+  year: number;
+  month: number;
+  actualIncome: number | null; // null: 미입력, 0: 0원 입력 완료, >0: 양수 금액
+  incomeModeSnapshot: IncomeMode;
+  incomeTypeSnapshot: IncomeType;
+  incomeSourceNameSnapshot: string;
+  memo?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Firebase 호환 9개 영역 통합 데이터 모델 (AppData)
+export interface AppData {
+  userInfo: UserInfo;
+  assets: {
+    onboardingAssets: OnboardingAsset[];
+    mainAssets: Asset[];
+  };
+  debts: {
+    onboardingDebts: OnboardingDebt[];
+    mainDebts: Debt[];
+  };
+  monthlyIncome: {
+    incomeSources: IncomeSource[];
+    incomeRecords?: IncomeRecord[];
+    legacyMonthlyTotalIncome?: number;
+  };
+  fixedExpenses: FixedExpenseItem[];
+  financialProducts: FinancialProductItem[];
+  goals: {
+    onboardingGoals: OnboardingGoal[];
+    mainGoals: Goal[];
+  };
+  businessInfo: BusinessInfo;
+  rules?: {
+    merchantRules: MerchantRule[];
+    categoryRules: CategoryRule[];
+    exclusionRules: ExclusionRule[];
+  };
+  otherSettings: {
+    settlementData: SettlementData;
+    schedules: ScheduleEvent[];
+    transactions: Transaction[];
+    preferences: UserPreferences;
+  };
+}
+
+
+

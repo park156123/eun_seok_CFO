@@ -1,0 +1,613 @@
+[
+  {
+    "id": "merchant_db_child",
+    "merchantMaster": "DB손",
+    "patterns": [
+      "DB손"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "보험",
+    "minorCategory": "아이보험",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_heungkuk_self",
+    "merchantMaster": "흥국",
+    "patterns": [
+      "흥국화재",
+      "흥화",
+      "흥국생명"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "보험",
+    "minorCategory": "본인보험",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_axa_driver",
+    "merchantMaster": "AXA",
+    "patterns": [
+      "AXA"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "보험",
+    "minorCategory": "운전자보험",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_kimgangtae",
+    "merchantMaster": "김강태",
+    "patterns": [
+      "김강태"
+    ],
+    "matchType": "exact",
+    "classificationType": "consumer",
+    "majorCategory": "가족",
+    "minorCategory": "교육비",
+    "detailCategory": "수영",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_bakseongsil",
+    "merchantMaster": "박성실",
+    "patterns": [
+      "박성실"
+    ],
+    "matchType": "exact",
+    "classificationType": "consumer",
+    "majorCategory": "가족",
+    "minorCategory": "교육비",
+    "detailCategory": "줄넘기",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_anyurim",
+    "merchantMaster": "안유림",
+    "patterns": [
+      "안유림"
+    ],
+    "matchType": "exact",
+    "classificationType": "consumer",
+    "majorCategory": "가족",
+    "minorCategory": "교육비",
+    "detailCategory": "미술",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_igyeongmin",
+    "merchantMaster": "이경민",
+    "patterns": [
+      "이경민"
+    ],
+    "matchType": "exact",
+    "classificationType": "consumer",
+    "majorCategory": "가족",
+    "minorCategory": "교육비",
+    "detailCategory": "공부방",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_jeongseongja",
+    "merchantMaster": "정성자",
+    "patterns": [
+      "정성자"
+    ],
+    "matchType": "exact",
+    "classificationType": "consumer",
+    "majorCategory": "가족",
+    "minorCategory": "교육비",
+    "detailCategory": "피아노",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_after_school",
+    "merchantMaster": "방과후",
+    "patterns": [
+      "방과후수강료",
+      "방과후재료비",
+      "방과후교재비",
+      "방과후"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "가족",
+    "minorCategory": "교육비",
+    "detailCategory": "방과후",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_kindergarten",
+    "merchantMaster": "금강펜테리움어린이집",
+    "patterns": [
+      "금강펜테리움어린이집",
+      "신한구립",
+      "구립금강펜테리움",
+      "신내역금강펜테리움",
+      "금강펜테리움"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "가족",
+    "minorCategory": "교육비",
+    "detailCategory": "어린이집",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_books",
+    "merchantMaster": "도서",
+    "patterns": [
+      "영풍문고",
+      "예스24"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "가족",
+    "minorCategory": "교육비",
+    "detailCategory": "도서",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_boxing",
+    "merchantMaster": "원업복싱",
+    "patterns": [
+      "원업복싱"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "건강",
+    "minorCategory": "운동",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_yakult",
+    "merchantMaster": "한국야쿠르트",
+    "patterns": [
+      "한국야쿠르트"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "식비",
+    "minorCategory": "장보기",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_cheongchun_fruit",
+    "merchantMaster": "청춘청과",
+    "patterns": [
+      "청춘청과"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "식비",
+    "minorCategory": "장보기",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_tomato",
+    "merchantMaster": "토마토",
+    "patterns": [
+      "토마토"
+    ],
+    "matchType": "exact",
+    "classificationType": "consumer",
+    "majorCategory": "식비",
+    "minorCategory": "장보기",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_paris",
+    "merchantMaster": "파리바게뜨",
+    "patterns": [
+      "파리바게뜨"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "식비",
+    "minorCategory": "장보기",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_lotte_guri",
+    "merchantMaster": "롯데쇼핑 구리점",
+    "patterns": [
+      "롯데쇼핑 구리점"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "식비",
+    "minorCategory": "외식",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_yeongjin",
+    "merchantMaster": "영진엠앤에프",
+    "patterns": [
+      "영진엠앤에프"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "식비",
+    "minorCategory": "장보기",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_small_land",
+    "merchantMaster": "작은영토",
+    "patterns": [
+      "작은영토"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "식비",
+    "minorCategory": "외식",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_concrete_oven",
+    "merchantMaster": "콘크리트오븐",
+    "patterns": [
+      "콘크리트오븐"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "식비",
+    "minorCategory": "외식",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_geumnam_super",
+    "merchantMaster": "금남슈퍼",
+    "patterns": [
+      "금남슈퍼"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "식비",
+    "minorCategory": "장보기",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-latest-policy",
+    "isActive": true
+  },
+  {
+    "id": "merchant_gs25",
+    "merchantMaster": "GS25",
+    "patterns": [
+      "GS25",
+      "지에스25"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "식비",
+    "minorCategory": "편의점",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_cu",
+    "merchantMaster": "CU",
+    "patterns": [
+      "CU",
+      "씨유"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "식비",
+    "minorCategory": "편의점",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_woowa",
+    "merchantMaster": "우아한형제들",
+    "patterns": [
+      "우아한형제들",
+      "배달의민족"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "식비",
+    "minorCategory": "배달",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-latest-policy",
+    "isActive": true
+  },
+  {
+    "id": "merchant_ketop",
+    "merchantMaster": "케이탑인형",
+    "patterns": [
+      "케이탑인형"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "생활",
+    "minorCategory": "생활용품",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_oliveyoung",
+    "merchantMaster": "올리브영",
+    "patterns": [
+      "올리브영"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "생활",
+    "minorCategory": "생활용품",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_coupang",
+    "merchantMaster": "쿠팡",
+    "patterns": [
+      "쿠팡"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "생활",
+    "minorCategory": "생활용품",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_naverpay",
+    "merchantMaster": "네이버페이",
+    "patterns": [
+      "네이버페이",
+      "네이버페이충전"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "생활",
+    "minorCategory": "생활용품",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-latest-policy",
+    "isActive": true
+  },
+  {
+    "id": "merchant_kakaopay",
+    "merchantMaster": "카카오페이",
+    "patterns": [
+      "카카오페이"
+    ],
+    "matchType": "exact",
+    "classificationType": "consumer",
+    "majorCategory": "기타",
+    "minorCategory": "기타지출",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-latest-policy",
+    "isActive": true
+  },
+  {
+    "id": "merchant_face",
+    "merchantMaster": "페이스토리",
+    "patterns": [
+      "페이스토리"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "생활",
+    "minorCategory": "생활용품",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_print",
+    "merchantMaster": "프린트",
+    "patterns": [
+      "프린트온",
+      "프린트카페"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "생활",
+    "minorCategory": "생활용품",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_coway",
+    "merchantMaster": "코웨이",
+    "patterns": [
+      "코웨이"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "생활",
+    "minorCategory": "생활용품",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_lgu",
+    "merchantMaster": "LGU+",
+    "patterns": [
+      "LGU+",
+      "LGU+인터넷",
+      "엘지유플러스"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "통신",
+    "minorCategory": "통신비",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_topten",
+    "merchantMaster": "TOPTEN",
+    "patterns": [
+      "신성통상 TOPTEN",
+      "TOPTEN",
+      "탑텐"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "생활",
+    "minorCategory": "생활용품",
+    "detailCategory": "의류",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_fuel",
+    "merchantMaster": "정해네트웍스",
+    "patterns": [
+      "정해네트웍스"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "이동",
+    "minorCategory": "차량유지",
+    "detailCategory": "주유",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_donation",
+    "merchantMaster": "당비",
+    "patterns": [
+      "당비"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "기타",
+    "minorCategory": "기부",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "merchant_other_group",
+    "merchantMaster": "송정동단체협의회",
+    "patterns": [
+      "송정동단체협의회"
+    ],
+    "matchType": "contains",
+    "classificationType": "consumer",
+    "majorCategory": "기타",
+    "minorCategory": "기타지출",
+    "detailCategory": null,
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  }
+]

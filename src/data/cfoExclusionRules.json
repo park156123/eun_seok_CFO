@@ -1,0 +1,163 @@
+[
+  {
+    "id": "exclude_bakjinsuk",
+    "patterns": [
+      "박진석",
+      "박진석(현하우스)"
+    ],
+    "matchType": "contains",
+    "classificationType": "excluded",
+    "exclusionReason": "internal_transfer",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "exclude_gong",
+    "patterns": [
+      "공선명"
+    ],
+    "matchType": "contains",
+    "classificationType": "excluded",
+    "exclusionReason": "user_excluded",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "exclude_beauty",
+    "patterns": [
+      "뷰티에이전시"
+    ],
+    "matchType": "contains",
+    "classificationType": "excluded",
+    "exclusionReason": "business_transaction",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "exclude_overseas",
+    "patterns": [
+      "마스타해외승인출금"
+    ],
+    "matchType": "contains",
+    "classificationType": "excluded",
+    "exclusionReason": "unknown",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "exclude_tax",
+    "patterns": [
+      "세무법인 청연"
+    ],
+    "matchType": "contains",
+    "classificationType": "excluded",
+    "exclusionReason": "business_transaction",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "exclude_kimayoung",
+    "patterns": [
+      "김아영"
+    ],
+    "matchType": "contains",
+    "classificationType": "excluded",
+    "exclusionReason": "user_excluded",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "exclude_black",
+    "patterns": [
+      "이재호(아르미헤어상)",
+      "블랙점이자"
+    ],
+    "matchType": "contains",
+    "classificationType": "excluded",
+    "exclusionReason": "business_transaction",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "exclude_kimrakhee",
+    "patterns": [
+      "김락희"
+    ],
+    "matchType": "contains",
+    "classificationType": "excluded",
+    "exclusionReason": "business_transaction",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "exclude_yousanghun",
+    "patterns": [
+      "토스 유상훈"
+    ],
+    "matchType": "contains",
+    "classificationType": "excluded",
+    "exclusionReason": "user_excluded",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "exclude_kangmija",
+    "patterns": [
+      "강미자"
+    ],
+    "matchType": "contains",
+    "classificationType": "excluded",
+    "exclusionReason": "internal_transfer",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "exclude_jungnang",
+    "patterns": [
+      "중랑구청"
+    ],
+    "matchType": "contains",
+    "classificationType": "excluded",
+    "exclusionReason": "user_excluded",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  },
+  {
+    "id": "exclude_debt",
+    "patterns": [
+      "이재호 대여금반환",
+      "이의순 대여금반환",
+      "이재호.대여금반환",
+      "이의순.대여금반환"
+    ],
+    "matchType": "contains",
+    "classificationType": "excluded",
+    "exclusionReason": "debt_principal_repayment",
+    "confidence": "confirmed",
+    "autoConfirm": true,
+    "source": "user-confirmed-doc",
+    "isActive": true
+  }
+]

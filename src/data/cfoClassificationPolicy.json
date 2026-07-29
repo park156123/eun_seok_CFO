@@ -1,0 +1,63 @@
+{
+  "version": "2.0",
+  "categoryTree": {
+    "식비": [
+      "외식",
+      "장보기",
+      "편의점",
+      "카페",
+      "배달"
+    ],
+    "생활": [
+      "생활용품",
+      "주거관리"
+    ],
+    "가족": [
+      "배우자 생활비",
+      "교육비",
+      "육아",
+      "경조사"
+    ],
+    "건강": [
+      "병원·약국",
+      "운동"
+    ],
+    "이동": [
+      "교통",
+      "차량유지"
+    ],
+    "통신": [
+      "통신비"
+    ],
+    "보험": [
+      "아이보험",
+      "본인보험",
+      "운전자보험"
+    ],
+    "기타": [
+      "기부",
+      "기타지출"
+    ]
+  },
+  "priority": [
+    "user-confirmed",
+    "merchant-exact",
+    "merchant-contains",
+    "exclusion",
+    "category-keyword",
+    "industry-pattern",
+    "ai-recommendation",
+    "needs-confirmation"
+  ],
+  "autoConfirmRule": "confidence가 confirmed 또는 high이고 autoConfirm=true이면 즉시 자동확정",
+  "aiUsage": "모든 결정형 규칙에 실패했을 때만 AI 추천 사용",
+  "neverGuess": [
+    "등록되지 않은 개인이체",
+    "승인번호",
+    "카드대금 합계",
+    "잘린 거래명",
+    "목적 불명 계좌이체"
+  ],
+  "ruleVersionKey": "classificationRuleVersion",
+  "notes": "기존 user-confirmed 규칙은 보존하고 initial-master만 v2.0으로 교체"
+}

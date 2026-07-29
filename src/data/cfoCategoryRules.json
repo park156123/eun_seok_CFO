@@ -1,0 +1,155 @@
+[
+  {
+    "id": "category_restaurant",
+    "keywords": [
+      "국밥",
+      "짬뽕",
+      "냉면",
+      "고등어",
+      "식당",
+      "횟집",
+      "김밥",
+      "분식",
+      "치킨",
+      "피자",
+      "족발",
+      "보쌈",
+      "칼국수",
+      "쌀국수",
+      "돈까스",
+      "해물",
+      "곱창"
+    ],
+    "majorCategory": "식비",
+    "minorCategory": "외식",
+    "confidence": "high",
+    "autoConfirm": true,
+    "priority": 70,
+    "isActive": true
+  },
+  {
+    "id": "category_grocery",
+    "keywords": [
+      "청과",
+      "마트",
+      "슈퍼",
+      "정육",
+      "수산",
+      "과일",
+      "야채",
+      "농협",
+      "하나로",
+      "홈마트"
+    ],
+    "majorCategory": "식비",
+    "minorCategory": "장보기",
+    "confidence": "high",
+    "autoConfirm": true,
+    "priority": 75,
+    "isActive": true
+  },
+  {
+    "id": "category_convenience",
+    "keywords": [
+      "GS25",
+      "지에스25",
+      "CU",
+      "씨유",
+      "세븐일레븐",
+      "이마트24"
+    ],
+    "majorCategory": "식비",
+    "minorCategory": "편의점",
+    "confidence": "high",
+    "autoConfirm": true,
+    "priority": 90,
+    "isActive": true
+  },
+  {
+    "id": "category_cafe",
+    "keywords": [
+      "스타벅스",
+      "투썸",
+      "메가커피",
+      "컴포즈",
+      "빽다방",
+      "이디야",
+      "카페",
+      "커피"
+    ],
+    "majorCategory": "식비",
+    "minorCategory": "카페",
+    "confidence": "high",
+    "autoConfirm": true,
+    "priority": 70,
+    "isActive": true
+  },
+  {
+    "id": "category_delivery",
+    "keywords": [
+      "우아한형제들",
+      "배달의민족",
+      "요기요",
+      "배달"
+    ],
+    "majorCategory": "식비",
+    "minorCategory": "배달",
+    "confidence": "high",
+    "autoConfirm": true,
+    "priority": 80,
+    "isActive": true
+  },
+  {
+    "id": "category_education",
+    "keywords": [
+      "방과후",
+      "교재비",
+      "재료비",
+      "수강료",
+      "학원",
+      "어린이집",
+      "유치원",
+      "공부방",
+      "피아노",
+      "미술",
+      "줄넘기",
+      "수영"
+    ],
+    "majorCategory": "가족",
+    "minorCategory": "교육비",
+    "confidence": "high",
+    "autoConfirm": true,
+    "priority": 85,
+    "isActive": true
+  },
+  {
+    "id": "category_health",
+    "keywords": [
+      "병원",
+      "의원",
+      "한의원",
+      "치과",
+      "약국"
+    ],
+    "majorCategory": "건강",
+    "minorCategory": "병원·약국",
+    "confidence": "high",
+    "autoConfirm": true,
+    "priority": 75,
+    "isActive": true
+  },
+  {
+    "id": "category_internet",
+    "keywords": [
+      "LGU+",
+      "LGU+인터넷",
+      "인터넷"
+    ],
+    "majorCategory": "통신",
+    "minorCategory": "통신비",
+    "confidence": "high",
+    "autoConfirm": true,
+    "priority": 95,
+    "isActive": true
+  }
+]
