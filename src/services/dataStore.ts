@@ -48,6 +48,13 @@ import {
   normalizeMerchantName,
   reclassifyTransactions,
 } from '../utils/transactionClassifier';
+import { SnapshotService } from './snapshotService';
+import {
+  MonthlySnapshot,
+  AssetSnapshot,
+  DebtSnapshot,
+  MonthlyDebtMovement,
+} from '../types';
 
 // Storage key for persistent mock data in browser session/local storage
 const LOCAL_STORAGE_KEY = 'cfo_global_mock_datastore_v1';
@@ -1529,7 +1536,281 @@ class GlobalMockDataStoreImpl implements IDataStore {
     this.data.otherSettings.activeCsvSession = undefined;
     this.saveToStorage();
   }
+
+  // ==================================================
+  // Snapshot Repository & Selector Methods (Phase 2-A)
+  // ==================================================
+  public getMonthlySnapshot(month: string) {
+    return SnapshotService.getMonthlySnapshot(month);
+  }
+  public getAssetSnapshotsByMonth(month: string) {
+    return SnapshotService.getAssetSnapshotsByMonth(month);
+  }
+  public getDebtSnapshotsByMonth(month: string) {
+    return SnapshotService.getDebtSnapshotsByMonth(month);
+  }
+  public getOpeningSnapshotStatus(month: string) {
+    return SnapshotService.getOpeningSnapshotStatus(month);
+  }
+  public getConfirmedOpeningSnapshot(month: string) {
+    return SnapshotService.getConfirmedOpeningSnapshot(month);
+  }
+  public getOpeningSnapshot(month: string) {
+    return SnapshotService.getOpeningSnapshot(month);
+  }
+  public getMonthlyDebtMovements(month: string) {
+    return SnapshotService.getMonthlyDebtMovements(month);
+  }
+  public hasMonthlySnapshot(month: string) {
+    return SnapshotService.hasMonthlySnapshot(month);
+  }
+  public saveMonthlySnapshot(snapshot: MonthlySnapshot) {
+    SnapshotService.saveMonthlySnapshot(snapshot);
+  }
+  public saveAssetSnapshots(month: string, snapshots: AssetSnapshot[]) {
+    SnapshotService.saveAssetSnapshots(month, snapshots);
+  }
+  public saveDebtSnapshots(month: string, snapshots: DebtSnapshot[]) {
+    SnapshotService.saveDebtSnapshots(month, snapshots);
+  }
+  public saveMonthlyDebtMovement(movement: MonthlyDebtMovement) {
+    SnapshotService.saveMonthlyDebtMovement(movement);
+  }
+  public saveOpeningSnapshot(monthly: MonthlySnapshot, assets: AssetSnapshot[], debts: DebtSnapshot[]) {
+    SnapshotService.saveOpeningSnapshot(monthly, assets, debts);
+  }
+  public updateDraftOpeningSnapshot(monthly: MonthlySnapshot, assets: AssetSnapshot[], debts: DebtSnapshot[]) {
+    SnapshotService.updateDraftOpeningSnapshot(monthly, assets, debts);
+  }
+  public confirmOpeningSnapshot(month: string) {
+    SnapshotService.confirmOpeningSnapshot(month);
+  }
+
+  public getOpeningSnapshotData(month: string) {
+    if (!month) return null;
+    const monthKey = month.trim();
+    const monthly = SnapshotService.getOpeningSnapshot(monthKey);
+    if (!monthly || monthly.source !== 'opening-seed') {
+      return null;
+    }
+    const assets = SnapshotService.getAssetSnapshotsByMonth(monthKey);
+    const debts = SnapshotService.getDebtSnapshotsByMonth(monthKey);
+    return {
+      ...monthly,
+      assets,
+      debts,
+    };
+  }
+
+  public getOpeningSnapshotDraft(month: string) {
+    if (!month) return null;
+    return this.getOpeningSnapshotData(month);
+  }
+
+  public hasOpeningSnapshotDraft(month: string): boolean {
+    return this.getOpeningSnapshotDraft(month) !== null;
+  }
+
+  public saveOpeningSnapshotDraft(draftInput: any) {
+    let month = draftInput.month;
+    let baseDate = draftInput.baseDate || draftInput.referenceDate;
+    let assets = draftInput.assets || [];
+    let debts = draftInput.debts || [];
+    let totalAssets = draftInput.totalAssets;
+    let totalDebts = draftInput.totalDebts;
+    let netWorth = draftInput.netWorth;
+
+    if (!month && draftInput.monthly) {
+      month = draftInput.monthly.month;
+      baseDate = baseDate || draftInput.monthly.baseDate || draftInput.monthly.referenceDate;
+      totalAssets = totalAssets ?? draftInput.monthly.totalAssets;
+      totalDebts = totalDebts ?? draftInput.monthly.totalDebts;
+      netWorth = netWorth ?? draftInput.monthly.netWorth;
+    }
+
+    if (!month || !/^\d{4}-\d{2}$/.test(String(month).trim())) {
+      throw new Error('기준월 형식이 올바르지 않습니다.');
+    }
+    const monthKey = String(month).trim();
+
+    const existing = SnapshotService.getOpeningSnapshot(monthKey);
+    if (existing && existing.status === 'confirmed') {
+      throw new Error('확정된 시작 스냅샷은 임시저장으로 덮어쓸 수 없습니다');
+    }
+
+    const nowIso = new Date().toISOString();
+    const isExistingDraft = existing && existing.status === 'draft';
+
+    const monthlyId = isExistingDraft && existing ? existing.id : (draftInput.id || draftInput.monthly?.id || `opening-${monthKey}-${Date.now()}`);
+    const createdAt = isExistingDraft && existing ? existing.createdAt : (draftInput.createdAt || draftInput.monthly?.createdAt || nowIso);
+
+    const calculatedTotalAssets = Math.round(
+      totalAssets ?? assets.filter((a: any) => a.isIncluded !== false).reduce((s: number, a: any) => s + (Number(a.value) || 0), 0)
+    );
+    const calculatedTotalDebts = Math.round(
+      totalDebts ?? debts.filter((d: any) => d.isIncluded !== false).reduce((s: number, d: any) => s + (Number(d.openingPrincipal) || 0), 0)
+    );
+    const calculatedNetWorth = netWorth ?? (calculatedTotalAssets - calculatedTotalDebts);
+
+    const updatedMonthly: MonthlySnapshot = {
+      id: monthlyId,
+      month: monthKey,
+      status: 'draft',
+      source: 'opening-seed',
+      referenceDate: baseDate || `${monthKey}-01`,
+      totalAssets: calculatedTotalAssets,
+      totalDebts: calculatedTotalDebts,
+      netWorth: calculatedNetWorth,
+      createdAt,
+      updatedAt: nowIso,
+      confirmedAt: undefined,
+      assetSnapshotIds: assets.map((a: any) => a.id),
+      debtSnapshotIds: debts.map((d: any) => d.id),
+    };
+
+    const updatedAssets: AssetSnapshot[] = assets.map((a: any) => ({
+      ...a,
+      monthlySnapshotId: monthlyId,
+      month: monthKey,
+      updatedAt: nowIso,
+      createdAt: a.createdAt || nowIso,
+    }));
+
+    const updatedDebts: DebtSnapshot[] = debts.map((d: any) => ({
+      ...d,
+      monthlySnapshotId: monthlyId,
+      month: monthKey,
+      updatedAt: nowIso,
+      createdAt: d.createdAt || nowIso,
+    }));
+
+    SnapshotService.saveOpeningSnapshot(updatedMonthly, updatedAssets, updatedDebts);
+
+    return {
+      ...updatedMonthly,
+      assets: updatedAssets,
+      debts: updatedDebts,
+    };
+  }
+
+  public confirmOpeningSnapshotDraft(month: string) {
+    if (!month || !/^\d{4}-\d{2}$/.test(month.trim())) {
+      throw new Error('기준월 형식이 올바르지 않습니다.');
+    }
+    const monthKey = month.trim();
+
+    const existing = SnapshotService.getOpeningSnapshot(monthKey);
+
+    if (existing && existing.status === 'confirmed') {
+      throw new Error('이미 확정된 시작 스냅샷이 존재합니다');
+    }
+
+    if (!existing || existing.source !== 'opening-seed' || existing.status !== 'draft') {
+      throw new Error('확정할 시작 스냅샷 임시저장 데이터가 없습니다');
+    }
+
+    const assets = SnapshotService.getAssetSnapshotsByMonth(monthKey);
+    const debts = SnapshotService.getDebtSnapshotsByMonth(monthKey);
+
+    const includedAssets = assets.filter((a) => a.isIncluded !== false);
+    const includedDebts = debts.filter((d) => d.isIncluded !== false);
+
+    if (includedAssets.length < 1) {
+      throw new Error('자산 항목이 최소 1개 이상 필요합니다.');
+    }
+
+    if (includedAssets.some((a) => Number(a.value) < 0)) {
+      throw new Error('자산 금액은 음수가 될 수 없습니다.');
+    }
+
+    if (includedDebts.some((d) => Number(d.openingPrincipal) < 0)) {
+      throw new Error('부채 원금은 음수가 될 수 없습니다.');
+    }
+
+    const totalAssets = Number(existing.totalAssets);
+    const totalDebts = Number(existing.totalDebts);
+    const netWorth = Number(existing.netWorth);
+
+    if (isNaN(totalAssets) || isNaN(totalDebts) || isNaN(netWorth)) {
+      throw new Error('스냅샷의 자산, 부채, 순자산 금액이 유효한 숫자가 아닙니다.');
+    }
+
+    if (Math.round(totalAssets - totalDebts) !== Math.round(netWorth)) {
+      throw new Error('자산과 부채의 차이가 순자산과 일치하지 않습니다.');
+    }
+
+    const nowIso = new Date().toISOString();
+
+    const confirmedMonthly: MonthlySnapshot = {
+      ...existing,
+      status: 'confirmed',
+      confirmedAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    const updatedAssets = assets.map((a) => ({
+      ...a,
+      updatedAt: nowIso,
+    }));
+
+    const updatedDebts = debts.map((d) => ({
+      ...d,
+      updatedAt: nowIso,
+    }));
+
+    SnapshotService.saveMonthlySnapshot(confirmedMonthly);
+    SnapshotService.saveAssetSnapshots(monthKey, updatedAssets);
+    SnapshotService.saveDebtSnapshots(monthKey, updatedDebts);
+
+    this.notifyListeners();
+
+    return {
+      ...confirmedMonthly,
+      assets: updatedAssets,
+      debts: updatedDebts,
+    };
+  }
+
+  public updateConfirmedOpeningSnapshot(payload: any) {
+    let month = payload.month;
+    if (!month || !/^\d{4}-\d{2}$/.test(String(month).trim())) {
+      throw new Error('기준월 형식이 올바르지 않습니다.');
+    }
+    const monthKey = String(month).trim();
+
+    const existing = SnapshotService.getOpeningSnapshot(monthKey);
+    if (!existing || existing.status !== 'confirmed') {
+      throw new Error('수정할 확정 스냅샷이 존재하지 않습니다.');
+    }
+
+    const nowIso = new Date().toISOString();
+
+    const draft = SnapshotService.prepareOpeningSnapshotDraft(payload);
+
+    const updatedMonthly: MonthlySnapshot = {
+      ...existing,
+      status: 'confirmed',
+      referenceDate: payload.baseDate || payload.referenceDate || existing.referenceDate,
+      totalAssets: draft.totalAssets,
+      totalDebts: draft.totalDebts,
+      netWorth: draft.netWorth,
+      assetSnapshotIds: draft.assets.map((a: any) => a.id),
+      debtSnapshotIds: draft.debts.map((d: any) => d.id),
+      updatedAt: nowIso,
+      revisedAt: nowIso,
+    };
+
+    SnapshotService.saveOpeningSnapshot(updatedMonthly, draft.assets, draft.debts);
+    this.notifyListeners();
+
+    return {
+      ...updatedMonthly,
+      assets: draft.assets,
+      debts: draft.debts,
+    };
+  }
 }
+
 
 export interface ConsumerSpendingSummary {
   activeSessionInfo?: ActiveCsvSession;
@@ -1664,6 +1945,29 @@ export interface IDataStore {
   saveCategoryRule(rule: CategoryRule): Promise<void>;
   saveExclusionRule(rule: ExclusionRule): Promise<void>;
 
+  // Snapshot Repository & Selector Methods (Phase 2-A)
+  getOpeningSnapshotStatus(month: string): 'confirmed' | 'draft' | 'none';
+  getConfirmedOpeningSnapshot(month: string): MonthlySnapshot | null;
+  getMonthlySnapshot(month: string): MonthlySnapshot | null;
+  getAssetSnapshotsByMonth(month: string): AssetSnapshot[];
+  getDebtSnapshotsByMonth(month: string): DebtSnapshot[];
+  getOpeningSnapshot(month: string): MonthlySnapshot | null;
+  getMonthlyDebtMovements(month: string): MonthlyDebtMovement[];
+  hasMonthlySnapshot(month: string): boolean;
+  saveMonthlySnapshot(snapshot: MonthlySnapshot): void;
+  saveAssetSnapshots(month: string, snapshots: AssetSnapshot[]): void;
+  saveDebtSnapshots(month: string, snapshots: DebtSnapshot[]): void;
+  saveMonthlyDebtMovement(movement: MonthlyDebtMovement): void;
+  saveOpeningSnapshot(monthly: MonthlySnapshot, assets: AssetSnapshot[], debts: DebtSnapshot[]): void;
+  updateDraftOpeningSnapshot(monthly: MonthlySnapshot, assets: AssetSnapshot[], debts: DebtSnapshot[]): void;
+  confirmOpeningSnapshot(month: string): void;
+  getOpeningSnapshotDraft(month: string): (MonthlySnapshot & { assets: AssetSnapshot[]; debts: DebtSnapshot[] }) | null;
+  hasOpeningSnapshotDraft(month: string): boolean;
+  saveOpeningSnapshotDraft(draftInput: any): MonthlySnapshot & { assets: AssetSnapshot[]; debts: DebtSnapshot[] };
+  confirmOpeningSnapshotDraft(month: string): MonthlySnapshot & { assets: AssetSnapshot[]; debts: DebtSnapshot[] };
+  updateConfirmedOpeningSnapshot(payload: any): MonthlySnapshot & { assets: AssetSnapshot[]; debts: DebtSnapshot[] };
+
   // Subscription for Real-time Reactive UI updates
+
   subscribe(listener: (data: AppData) => void): () => void;
 }

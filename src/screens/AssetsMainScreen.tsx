@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { ScreenId, Asset, Debt } from '../types';
 import { GlobalMockDataStore } from '../services/dataStore';
+import { SnapshotService, subscribeSnapshots } from '../services/snapshotService';
 import { useSelectedMonth } from '../context/SelectedMonthContext';
 import { MonthSelector } from '../components/MonthSelector';
 import { getMonthlyRecordForMonth } from '../utils/monthDataSelectors';
+import { OpeningSnapshotModal } from '../components/OpeningSnapshotModal';
 
 interface AssetsMainScreenProps {
   onNavigate: (screen: ScreenId) => void;
@@ -16,31 +18,68 @@ export const AssetsMainScreen: React.FC<AssetsMainScreenProps> = ({
 }) => {
   const { selectedMonth, setSelectedMonth, formattedSelectedMonth, year, month } = useSelectedMonth();
   const [, setTick] = useState(0);
+  const [isOpeningSnapshotModalOpen, setIsOpeningSnapshotModalOpen] = useState(false);
 
   useEffect(() => {
-    return GlobalMockDataStore.subscribe(() => {
+    const unsubStore = GlobalMockDataStore.subscribe(() => {
       setTick((t) => t + 1);
     });
+    const unsubSnapshots = subscribeSnapshots(() => {
+      setTick((t) => t + 1);
+    });
+    return () => {
+      unsubStore();
+      unsubSnapshots();
+    };
   }, []);
 
-  const now = new Date();
-  const isCurrentActiveMonth = (year === now.getFullYear() && month === now.getMonth() + 1) || (year === 2026 && month === 6);
-  const currentRecord = getMonthlyRecordForMonth(selectedMonth);
-  const hasSnapshot = isCurrentActiveMonth || (currentRecord && (currentRecord.assetSnapshot || currentRecord.status === '완료'));
+  const snapshotStatus = SnapshotService.getOpeningSnapshotStatus(selectedMonth);
+  let openingSnapshotButtonText = `${month}월 시작 스냅샷 작성`;
+  if (snapshotStatus === 'confirmed') {
+    openingSnapshotButtonText = `${month}월 시작 스냅샷 보기`;
+  } else if (snapshotStatus === 'draft') {
+    openingSnapshotButtonText = `${month}월 시작 스냅샷 이어쓰기`;
+  }
 
-  const assetSummary = GlobalMockDataStore.getTotalAssetsSummary();
-  const debtTotal = GlobalMockDataStore.getTotalDebtsSummary();
-  const netWorth = GlobalMockDataStore.getNetWorth();
+  const isConfirmedOpening = snapshotStatus === 'confirmed';
 
-  const displayNetWorth = netWorth;
-  const displayRE = assetSummary.realEstateTotal;
-  const displayFin = assetSummary.financialTotal;
-  const displayDebt = debtTotal;
+  const confirmedAssets = isConfirmedOpening
+    ? SnapshotService.getAssetSnapshotsByMonth(selectedMonth).filter((a) => a.isIncluded !== false)
+    : [];
+  const confirmedDebts = isConfirmedOpening
+    ? SnapshotService.getDebtSnapshotsByMonth(selectedMonth).filter((d) => d.isIncluded !== false)
+    : [];
+
+  const displayTotalAssets = confirmedAssets.reduce((sum, a) => sum + (Number(a.value) || 0), 0);
+  const displayTotalDebts = confirmedDebts.reduce((sum, d) => sum + (Number(d.openingPrincipal) || 0), 0);
+  const displayNetWorth = displayTotalAssets - displayTotalDebts;
+
+  const isRealEstateCat = (cat?: string) => {
+    if (!cat) return false;
+    return ['부동산', '아파트', '상가', '주택', '건물', '토지', '빌라', '오피스텔'].some((k) => cat.includes(k));
+  };
+
+  const isFinancialCat = (cat?: string) => {
+    if (!cat) return false;
+    return ['금융', '예적금', '예금', '적금', '주식', '펀드', '현금', '통장', '비상금', '암호화폐', '채권'].some((k) => cat.includes(k));
+  };
+
+  let displayRE = 0;
+  let displayFin = 0;
+  confirmedAssets.forEach((a) => {
+    const val = Number(a.value) || 0;
+    const cat = a.assetTypeSnapshot || '';
+    if (isRealEstateCat(cat)) {
+      displayRE += val;
+    } else if (isFinancialCat(cat)) {
+      displayFin += val;
+    }
+  });
 
   return (
     <div className="space-y-5 pb-28">
-      {/* 0. Top Header Bar with Global Month Selector */}
-      <section className="bg-white p-4 rounded-2xl border border-[#c5c5d3]/30 shadow-xs flex items-center justify-between">
+      {/* 0. Top Header Bar with Global Month Selector & Opening Snapshot Button */}
+      <section className="bg-white p-4 rounded-2xl border border-[#c5c5d3]/30 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="font-dohyeon text-lg text-[#00236f]">
             {formattedSelectedMonth} 자산·부채
@@ -49,13 +88,22 @@ export const AssetsMainScreen: React.FC<AssetsMainScreenProps> = ({
             기준월 순자산 및 자산 구성 현황
           </p>
         </div>
-        <MonthSelector
-          selectedMonth={selectedMonth}
-          onChangeMonth={setSelectedMonth}
-        />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsOpeningSnapshotModalOpen(true)}
+            className="px-3.5 py-1.5 bg-[#00236f] hover:bg-[#1e3a8a] text-white text-xs font-dohyeon rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+          >
+            <span className="material-symbols-outlined text-sm">flag</span>
+            {openingSnapshotButtonText}
+          </button>
+          <MonthSelector
+            selectedMonth={selectedMonth}
+            onChangeMonth={setSelectedMonth}
+          />
+        </div>
       </section>
 
-      {hasSnapshot ? (
+      {isConfirmedOpening ? (
         <>
           {/* Total Net Worth Hero Section */}
           <section>
@@ -134,7 +182,7 @@ export const AssetsMainScreen: React.FC<AssetsMainScreenProps> = ({
               </div>
               <p className="font-label-md text-xs text-[#444651] mb-0.5">부채</p>
               <p className="font-body-lg text-sm font-bold text-[#191c1e]">
-                {displayDebt.toLocaleString()}원
+                {displayTotalDebts.toLocaleString()}원
               </p>
             </div>
           </section>
@@ -153,16 +201,27 @@ export const AssetsMainScreen: React.FC<AssetsMainScreenProps> = ({
               월별 스냅샷이 생성되면 {formattedSelectedMonth}의 정확한 순자산, 부동산, 금융자산 및 부채 잔액을 확인할 수 있습니다.
             </p>
           </div>
-          <div className="pt-2">
+          <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
             <button
-              onClick={() => onNavigate('3-1')}
-              className="px-4 py-2 bg-[#00236f] hover:bg-[#1e3a8a] text-white text-xs font-dohyeon rounded-xl shadow-xs transition-all cursor-pointer"
+              onClick={() => setIsOpeningSnapshotModalOpen(true)}
+              className="px-4 py-2 bg-[#00236f] hover:bg-[#1e3a8a] text-white text-xs font-dohyeon rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
             >
-              마스터 자산·부채 목록 관리
+              <span className="material-symbols-outlined text-sm">flag</span>
+              {openingSnapshotButtonText}
             </button>
           </div>
         </section>
       )}
+
+      {/* Opening Snapshot Modal */}
+      <OpeningSnapshotModal
+        isOpen={isOpeningSnapshotModalOpen}
+        onClose={() => setIsOpeningSnapshotModalOpen(false)}
+        selectedMonth={formattedSelectedMonth}
+        onConfirmed={() => {
+          setTick((t) => t + 1);
+        }}
+      />
 
       {/* Quick Navigation Links */}
       <section className="space-y-3">
@@ -176,7 +235,7 @@ export const AssetsMainScreen: React.FC<AssetsMainScreenProps> = ({
               <span className="material-symbols-outlined text-[#00236f]">analytics</span>
             </div>
             <span className="font-body-md text-sm font-bold text-[#191c1e]">
-              자산·부채 상세 목록 관리
+              {month}월 자산·부채 상세보기
             </span>
           </div>
           <span className="material-symbols-outlined text-[#757682]">chevron_right</span>
@@ -192,7 +251,7 @@ export const AssetsMainScreen: React.FC<AssetsMainScreenProps> = ({
               <span className="material-symbols-outlined text-[#006c49]">insights</span>
             </div>
             <span className="font-body-md text-sm font-bold text-[#191c1e]">
-              {formattedSelectedMonth} 현금흐름 분석
+              {month}월 현금흐름 분석
             </span>
           </div>
           <span className="material-symbols-outlined text-[#757682]">chevron_right</span>

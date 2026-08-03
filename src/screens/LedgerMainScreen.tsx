@@ -15,6 +15,8 @@ import {
   getExpenseSummaryForMonth,
   getCategorySummaryForMonth,
   getMonthlyRecordForMonth,
+  getMonthlySettlementSummary,
+  normalizeMonthKey,
 } from '../utils/monthDataSelectors';
 
 interface LedgerMainScreenProps {
@@ -30,6 +32,8 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
   const { selectedMonth, setSelectedMonth, formattedSelectedMonth } = useSelectedMonth();
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [showAllInsights, setShowAllInsights] = useState<boolean>(false);
+  const [showIncomeBreakdown, setShowIncomeBreakdown] = useState<boolean>(false);
+  const [showOutflowBreakdown, setShowOutflowBreakdown] = useState<boolean>(false);
 
   const [, setTick] = useState(0);
 
@@ -43,6 +47,7 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
   const selectedMonthTxs = getTransactionsForMonth(selectedMonth);
   const summary = getExpenseSummaryForMonth(selectedMonth);
   const categoryList = getCategorySummaryForMonth(selectedMonth);
+  const settlementSummary = getMonthlySettlementSummary(selectedMonth);
 
   const totalLivingExpense = summary.totalExpense;
 
@@ -55,6 +60,48 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
   } else if (settlementStatus === '진행중') {
     settlementButtonText = `${formattedSelectedMonth} 결산 계속하기`;
   }
+
+  // Retrieve saved income items for selected month without altering any calculation
+  const getIncomeItemsForMonth = () => {
+    if (currentRecord && Array.isArray(currentRecord.incomes) && currentRecord.incomes.length > 0) {
+      return currentRecord.incomes
+        .filter((inc: any) => (Number(inc.amount) || 0) > 0)
+        .map((inc: any) => ({
+          id: inc.id || `inc_${inc.incomeName || inc.name}`,
+          name: inc.incomeName || inc.name || '수입원',
+          type: inc.incomeType || '사업소득',
+          amount: Number(inc.amount) || 0,
+        }));
+    }
+
+    const norm = normalizeMonthKey(selectedMonth);
+    const storeIncomes = GlobalMockDataStore.getIncomeRecords(norm.year, norm.month);
+    const sources = GlobalMockDataStore.getIncomeSources();
+    if (storeIncomes && storeIncomes.length > 0) {
+      return storeIncomes
+        .filter((r) => (Number(r.actualIncome) || 0) > 0)
+        .map((r) => {
+          const src = sources.find((s) => s.id === r.incomeSourceId);
+          return {
+            id: r.id,
+            name: src?.incomeName || src?.name || '수입원',
+            type: src?.incomeType || '사업소득',
+            amount: Number(r.actualIncome) || 0,
+          };
+        });
+    }
+
+    return sources
+      .filter((s: any) => (Number(s.amount || s.fixedMonthlyIncome || s.monthlyIncome || 0)) > 0)
+      .map((s: any) => ({
+        id: s.id,
+        name: s.incomeName || s.name || '수입원',
+        type: s.incomeType || '사업소득',
+        amount: Number(s.amount || s.fixedMonthlyIncome || s.monthlyIncome || 0),
+      }));
+  };
+
+  const incomeItems = getIncomeItemsForMonth();
 
   // Calculate Insights strictly for selected month transactions
   const insights = calculateConsumerInsights(selectedMonthTxs);
@@ -80,84 +127,227 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
         />
       </section>
 
-      {/* Active Session Info Banner */}
+      {/* 1. CSV 분석 정보 (Active Session Info Banner) */}
       <ActiveSessionBanner
         showActions={true}
         onNavigateToSettlement={() => onNavigate('2-3')}
       />
 
-      {/* Total Expenditure Hero Card */}
-      <section className="relative overflow-hidden rounded-2xl bg-[#00236f] p-6 text-white shadow-lg flex flex-col justify-between min-h-40">
-        <div className="z-10">
-          <div className="flex justify-between items-center">
-            <p className="font-body-md text-xs text-white/80">{formattedSelectedMonth} 총 소비지출</p>
-            <span className="text-[10px] font-bold bg-white/20 px-2 py-0.5 rounded text-white">
-              소비 집계 기준
+      {/* 2. 요약 카드 영역 (총 소비지출 Hero + 총수입 / 총현금유출 Grid) */}
+      <section className="space-y-3">
+        {/* Total Expenditure Hero Card (메인 진입점: 클릭 시 2-1 이동) */}
+        <div
+          id="ledger-total-spending-hero"
+          onClick={() => onNavigate('2-1')}
+          className="group relative overflow-hidden rounded-2xl bg-[#00236f] p-5 sm:p-6 text-white shadow-md hover:shadow-xl transition-all cursor-pointer flex flex-col justify-between min-h-40 border border-[#00236f] active:scale-[0.99]"
+        >
+          <div className="z-10">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-white/80 text-lg">receipt_long</span>
+                <p className="font-body-md text-xs sm:text-sm text-white/90 font-medium">
+                  {formattedSelectedMonth} 총 소비지출
+                </p>
+              </div>
+              <span className="text-[11px] font-bold bg-white/20 group-hover:bg-[#6ffbbe] group-hover:text-[#005236] px-2.5 py-1 rounded-md text-white transition-colors flex items-center gap-1">
+                지출내역 보기
+                <span className="material-symbols-outlined text-xs">arrow_forward</span>
+              </span>
+            </div>
+            <h2 className="font-dohyeon text-3xl sm:text-4xl mt-3 text-white tracking-tight">
+              {totalLivingExpense.toLocaleString()}원
+            </h2>
+          </div>
+          <div className="z-10 flex items-center justify-between text-[#6ffbbe] bg-white/10 px-3 py-1.5 rounded-xl border border-white/20 mt-4 text-xs font-medium">
+            <span className="flex items-center gap-1.5 truncate">
+              <span className="material-symbols-outlined text-sm shrink-0">auto_awesome</span>
+              <span className="truncate">
+                {summary.totalCount > 0
+                  ? `${formattedSelectedMonth} 소비 포함 총 ${summary.totalCount}건의 거래가 집계되었습니다`
+                  : `${formattedSelectedMonth} 소비 데이터가 없습니다. CSV를 업로드해 보세요.`}
+              </span>
+            </span>
+            <span className="text-[11px] underline shrink-0 ml-2 group-hover:text-white">
+              전체 내역 확인 &gt;
             </span>
           </div>
-          <h2 className="font-dohyeon text-3xl mt-2 text-white tracking-tight">
-            -{totalLivingExpense.toLocaleString()}원
-          </h2>
+          <div className="absolute -right-8 -top-8 w-40 h-40 bg-white/5 rounded-full blur-2xl pointer-events-none" />
         </div>
-        <div className="z-10 flex items-center gap-1.5 text-[#6ffbbe] bg-white/10 w-fit px-3 py-1 rounded-full border border-white/20 mt-3">
-          <span className="material-symbols-outlined text-sm">auto_awesome</span>
-          <span className="font-label-md text-xs">
-            {summary.totalCount > 0
-              ? `${formattedSelectedMonth} 소비 포함 총 ${summary.totalCount}건의 거래가 집계되었습니다`
-              : `${formattedSelectedMonth} 소비 데이터가 없습니다. CSV를 업로드해 보세요.`}
-          </span>
+
+        {/* 총수입 & 총현금유출 Breakdown Cards Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* 총수입 카드 (클릭 시 수입 구성 Breakdown 토글) */}
+          <div
+            id="ledger-total-income-card"
+            className="bg-white rounded-2xl border border-[#c5c5d3]/30 shadow-xs hover:border-[#00236f]/30 hover:shadow-md transition-all overflow-hidden"
+          >
+            <div
+              onClick={() => setShowIncomeBreakdown(!showIncomeBreakdown)}
+              className="p-4.5 cursor-pointer flex items-center justify-between select-none active:scale-[0.99] transition-transform"
+            >
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 text-xs text-[#757682] font-semibold">
+                  <span className="material-symbols-outlined text-base text-[#006c49]">trending_up</span>
+                  <span>총수입</span>
+                </div>
+                <p className="font-dohyeon text-xl sm:text-2xl text-[#191c1e]">
+                  {settlementSummary.totalIncome.toLocaleString()}원
+                </p>
+              </div>
+              <div className="flex items-center gap-1 text-xs text-[#00236f] font-bold bg-[#f0f4fd] px-2.5 py-1.5 rounded-xl">
+                <span>{showIncomeBreakdown ? '접기' : '수입 구성'}</span>
+                <span className="material-symbols-outlined text-sm">
+                  {showIncomeBreakdown ? 'expand_less' : 'expand_more'}
+                </span>
+              </div>
+            </div>
+
+            {showIncomeBreakdown && (
+              <div className="px-4.5 pb-4 pt-2 border-t border-[#eceef0] bg-[#f8fafd] space-y-2 animate-fadeIn">
+                <p className="text-[11px] font-bold text-[#757682] mb-1 flex justify-between">
+                  <span>확정 수입원 항목</span>
+                  <span>금액</span>
+                </p>
+                {incomeItems.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {incomeItems.map((inc) => (
+                      <div key={inc.id} className="flex justify-between items-center text-xs">
+                        <span className="text-[#191c1e] font-medium flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#006c49]" />
+                          {inc.name}
+                          <span className="text-[10px] text-[#757682] bg-white px-1.5 py-0.2 rounded border border-[#c5c5d3]/30">
+                            {inc.type}
+                          </span>
+                        </span>
+                        <span className="font-dohyeon text-[#006c49]">
+                          {inc.amount.toLocaleString()}원
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-[#757682] py-1 text-center font-medium">
+                    저장된 수입 항목이 없습니다
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* 총현금유출 카드 (클릭 시 현금유출 구성 Breakdown 토글) */}
+          <div
+            id="ledger-total-outflow-card"
+            className="bg-white rounded-2xl border border-[#c5c5d3]/30 shadow-xs hover:border-[#00236f]/30 hover:shadow-md transition-all overflow-hidden"
+          >
+            <div
+              onClick={() => setShowOutflowBreakdown(!showOutflowBreakdown)}
+              className="p-4.5 cursor-pointer flex items-center justify-between select-none active:scale-[0.99] transition-transform"
+            >
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 text-xs text-[#757682] font-semibold">
+                  <span className="material-symbols-outlined text-base text-[#ba1a1a]">trending_down</span>
+                  <span>총현금유출</span>
+                </div>
+                <p className="font-dohyeon text-xl sm:text-2xl text-[#191c1e]">
+                  {settlementSummary.totalOutflow.toLocaleString()}원
+                </p>
+              </div>
+              <div className="flex items-center gap-1 text-xs text-[#00236f] font-bold bg-[#f0f4fd] px-2.5 py-1.5 rounded-xl">
+                <span>{showOutflowBreakdown ? '접기' : '유출 구성'}</span>
+                <span className="material-symbols-outlined text-sm">
+                  {showOutflowBreakdown ? 'expand_less' : 'expand_more'}
+                </span>
+              </div>
+            </div>
+
+            {showOutflowBreakdown && (
+              <div className="px-4.5 pb-4 pt-2 border-t border-[#eceef0] bg-[#f8fafd] space-y-2 animate-fadeIn">
+                <p className="text-[11px] font-bold text-[#757682] mb-1">
+                  월간결산 확정 현금유출 구성
+                </p>
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex justify-between items-center py-0.5 border-b border-[#eceef0]">
+                    <span className="text-[#191c1e] font-semibold">총현금유출</span>
+                    <span className="font-dohyeon text-[#ba1a1a]">
+                      {settlementSummary.totalOutflow.toLocaleString()}원
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center pl-2">
+                    <span className="text-[#444651] font-medium flex items-center gap-1">
+                      <span className="w-1 h-1 rounded-full bg-[#757682]" />
+                      생활지출
+                    </span>
+                    <span className="font-semibold text-[#191c1e]">
+                      {settlementSummary.livingExpense.toLocaleString()}원
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center pl-2">
+                    <span className="text-[#444651] font-medium flex items-center gap-1">
+                      <span className="w-1 h-1 rounded-full bg-[#757682]" />
+                      금융비용(이자)
+                    </span>
+                    <span className="font-semibold text-[#191c1e]">
+                      {settlementSummary.financialCost.toLocaleString()}원
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center pl-2">
+                    <span className="text-[#444651] font-medium flex items-center gap-1">
+                      <span className="w-1 h-1 rounded-full bg-[#757682]" />
+                      부채상환 원금
+                    </span>
+                    <span className="font-semibold text-[#191c1e]">
+                      {settlementSummary.debtPrincipal.toLocaleString()}원
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center pl-2">
+                    <span className="text-[#444651] font-medium flex items-center gap-1">
+                      <span className="w-1 h-1 rounded-full bg-[#757682]" />
+                      저축·투자
+                    </span>
+                    <span className="font-semibold text-[#191c1e]">
+                      {settlementSummary.totalSavings.toLocaleString()}원
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-        <div className="absolute -right-8 -top-8 w-40 h-40 bg-white/5 rounded-full blur-2xl pointer-events-none" />
       </section>
 
-      {/* Quick Navigation */}
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        {/* Primary Action Button: 월간결산 */}
+      {/* 3. 결산 보기 (가장 강조되는 메인 CTA 버튼) */}
+      <section>
         <button
           id="ledger-nav-monthly-settlement-primary"
           onClick={() => onNavigate('2-3')}
-          className="md:col-span-2 bg-[#00236f] hover:bg-[#1e3a8a] text-white p-5 rounded-2xl shadow-md border border-[#00236f] transition-all flex items-center justify-between group active:scale-98 cursor-pointer text-left"
+          className="w-full py-5 sm:py-6 px-6 bg-[#00236f] hover:bg-[#1e3a8a] text-white font-dohyeon rounded-2xl shadow-md hover:shadow-xl active:scale-[0.98] transition-all flex items-center justify-between group cursor-pointer border border-[#00236f] text-left"
         >
-          <div className="space-y-1">
+          <div className="space-y-1.5 min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-[#6ffbbe] text-[#005236]">
+              <span className="text-xs font-bold px-2.5 py-0.5 rounded-md bg-[#6ffbbe] text-[#005236] shrink-0">
                 {settlementStatus === '완료' || settlementStatus === '결산잠금' ? '결산 완료' : settlementStatus === '진행중' ? '결산 진행중' : '미결산'}
               </span>
-              <span className="text-xs text-white/80">핵심 가계부 절차</span>
+              <span className="text-xs text-white/80 font-body-sm truncate">핵심 가계부 결산 절차</span>
             </div>
-            <h3 className="font-dohyeon text-lg text-white group-hover:underline">
+            <h3 className="font-dohyeon text-xl sm:text-2xl text-white group-hover:underline flex items-center gap-2">
               {settlementButtonText}
+              <span className="material-symbols-outlined text-xl text-[#6ffbbe] group-hover:translate-x-1 transition-transform">
+                arrow_forward
+              </span>
             </h3>
-            <p className="text-xs text-white/70">
-              CSV 업로드 · 거래검토 · 손익확정
+            <p className="text-xs text-white/75 font-body-sm">
+              CSV 업로드 · 거래검토 · 손익확정 한눈에 시작하기
             </p>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-white/15 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-            <span className="material-symbols-outlined text-2xl text-[#6ffbbe]">calendar_month</span>
-          </div>
-        </button>
-
-        {/* Secondary Action Button: 지출내역 */}
-        <button
-          id="ledger-nav-expense-list-secondary"
-          onClick={() => onNavigate('2-1')}
-          className="bg-white p-5 rounded-2xl shadow-xs border border-[#c5c5d3]/30 hover:border-[#00236f]/40 hover:bg-[#f8fafd] transition-all flex md:flex-col justify-between items-center md:items-start group active:scale-98 cursor-pointer text-left"
-        >
-          <div className="w-10 h-10 rounded-xl bg-[#dce1ff] flex items-center justify-center mb-0 md:mb-2 group-hover:scale-105 transition-transform shrink-0">
-            <span className="material-symbols-outlined text-[#00236f]">receipt_long</span>
-          </div>
-          <div>
-            <h4 className="font-dohyeon text-sm text-[#191c1e] group-hover:text-[#00236f]">
-              지출내역 보기
-            </h4>
-            <p className="text-[11px] text-[#757682] mt-0.5">
-              소비 및 제외 거래 ({summary.totalCount}건)
-            </p>
+          <div className="w-13 h-13 sm:w-14 sm:h-14 rounded-2xl bg-white/15 border border-white/20 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform shadow-xs">
+            <span className="material-symbols-outlined text-3xl text-[#6ffbbe]" style={{ fontVariationSettings: "'FILL' 1" }}>
+              calendar_month
+            </span>
           </div>
         </button>
       </section>
 
-      {/* Category Breakdown Overview */}
+      {/* 4. 카테고리별 지출 요약 (Category Breakdown Overview) */}
       <section className="bg-white p-5 rounded-2xl shadow-xs border border-[#c5c5d3]/20 space-y-4">
         <div className="flex justify-between items-center border-b border-[#c5c5d3]/20 pb-3">
           <h3 className="font-dohyeon text-base text-[#00236f] flex items-center gap-2">
@@ -180,7 +370,7 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
             <button
               type="button"
               onClick={() => onNavigate('2-3')}
-              className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 bg-[#00236f] text-white text-xs font-dohyeon rounded-xl hover:bg-[#1e3a8a] transition-all shadow-2xs"
+              className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 bg-[#00236f] text-white text-xs font-dohyeon rounded-xl hover:bg-[#1e3a8a] transition-all shadow-2xs cursor-pointer"
             >
               <span className="material-symbols-outlined text-sm">cloud_upload</span>
               {formattedSelectedMonth} CSV 업로드
@@ -321,7 +511,7 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
         )}
       </section>
 
-      {/* Quick Consumer Insights Section */}
+      {/* 5. 소비 인사이트 (Quick Consumer Insights Section) */}
       <section className="bg-white p-5 rounded-2xl shadow-xs border border-[#c5c5d3]/20 space-y-4">
         <div className="flex justify-between items-center border-b border-[#c5c5d3]/20 pb-3">
           <h3 className="font-dohyeon text-base text-[#00236f] flex items-center gap-2">
@@ -466,7 +656,7 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
         )}
       </section>
 
-      {/* AI CFO One-Line Comment Card */}
+      {/* 6. AI CFO 한줄 코멘트 (AI CFO One-Line Comment Card) */}
       <section className="bg-gradient-to-r from-[#00236f]/5 to-[#6ffbbe]/10 p-4.5 rounded-2xl border border-[#00236f]/20 shadow-xs space-y-2">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-[#00236f] text-[#6ffbbe] flex items-center justify-center shrink-0">

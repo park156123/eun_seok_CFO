@@ -233,7 +233,7 @@ export function App() {
           />
         );
       case '3-2':
-        return <CashflowScreen />;
+        return <CashflowScreen onNavigate={setCurrentScreen} />;
 
       // 4. Planner Tab
       case '4-0':

@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { SettlementData, IncomeSource, IncomeRecord, ClassificationResult, ExclusionReasonCode, MerchantRule, ExclusionRule, RuleConfidence, Transaction } from '../types';
 import { GlobalMockDataStore } from '../services/dataStore';
+import { SnapshotService, formatMonthKorean, normalizeMonthKey } from '../services/snapshotService';
 import { ActiveSessionBanner } from '../components/ActiveSessionBanner';
 import { isConsumerTransaction } from '../utils/consumerExpenseUtils';
 import { useSelectedMonth } from '../context/SelectedMonthContext';
+import { calculateMonthFinancialCost } from '../utils/financialCostCalculator';
+import { OpeningSnapshotModal } from '../components/OpeningSnapshotModal';
 
 import {
   readCsvFileWithEncoding,
@@ -110,6 +113,8 @@ export interface MonthlySettlementRecord {
   csvDuplicateCount?: number;
   csvAutoRate?: number;
   transactions: ReviewTransaction[];
+  financialCost?: number;
+  specialNotes?: string;
   completedAtDate?: string; // e.g., "2026.07.02"
   completedAtTime?: string; // e.g., "21:14"
 }
@@ -248,6 +253,29 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
     }
     // Initial default records
     return {
+      '2026년 4월': {
+        month: '2026년 4월',
+        year: 2026,
+        monthNum: 4,
+        status: '결산잠금',
+        currentStep: 5,
+        incomes: [
+          { id: 'inc-401', incomeName: '미용실 본점', incomeType: '사업소득', amount: 18500000, prevAmount: 18000000 },
+          { id: 'inc-402', incomeName: '현하우스 임대료', incomeType: '임대소득', amount: 4180000, prevAmount: 4180000 },
+        ],
+        savingsInvestments: [
+          { id: 'sav-401', name: '청년희망적금', type: '적금', tradeType: '단순저축', amount: 500000, memo: '매월 자동이체' },
+          { id: 'sav-402', name: '삼성전자 ETF', type: 'ETF', tradeType: '매수', amount: 1000000, memo: '적립식 매수' },
+        ],
+        csvUploaded: false,
+        csvFileName: '',
+        csvTotalCount: 0,
+        csvAutoCount: 0,
+        csvReviewCount: 0,
+        transactions: [],
+        completedAtDate: '2026.05.02',
+        completedAtTime: '18:30',
+      },
       '2026년 5월': {
         month: '2026년 5월',
         status: '결산잠금',
@@ -315,7 +343,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
           {
             id: 'tx-103',
             date: '06.25 11:00',
-            merchant: '국민은행 원리금상환',
+            merchant: '대출 원리금상환',
             amount: 1800000,
             category: '부채상환',
             type: 'debt',
@@ -326,7 +354,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
           {
             id: 'tx-104',
             date: '06.25 11:00',
-            merchant: '국민은행 주담대 이자',
+            merchant: '대출 이자납입',
             amount: 350000,
             category: '금융비용',
             type: 'financial',
@@ -398,6 +426,10 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
     csvUploaded: false,
     transactions: [],
   };
+
+  // Expanded breakdown card state
+  const [expandedCard, setExpandedCard] = useState<'none' | 'living' | 'financial' | 'debt' | 'savings'>('none');
+  const [isOpeningSnapshotModalOpen, setIsOpeningSnapshotModalOpen] = useState(false);
 
   // STEP 3 Local States for upload animation, drag & drop, column mapping, and error handling
   const [csvUploadState, setCsvUploadState] = useState<'idle' | 'uploading' | 'completed' | 'error'>('idle');
@@ -996,6 +1028,11 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   // STEP 4: Transaction Review Handlers (Requirements 5 & 6)
   const [reviewFilter, setReviewFilter] = useState<'all' | 'needsReview' | 'consumer' | 'excluded'>('all');
   const [consumerSubFilter, setConsumerSubFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  useEffect(() => {
+    setSearchQuery('');
+  }, [selectedMonth]);
 
   const [editingTx, setEditingTx] = useState<ReviewTransaction | null>(null);
   const [modalChoice, setModalChoice] = useState<'consumer' | 'excluded'>('consumer');
@@ -1162,6 +1199,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
       updateCurrentRecord((rec) => ({
         ...rec,
         status: '결산잠금', // Lock status (Requirement 2)
+        financialCost: financialCostResult.totalCost, // Save financial cost snapshot at lock time
         completedAtDate: dateStr,
         completedAtTime: timeStr,
       }));
@@ -1192,35 +1230,94 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   const totalIncome = currentRecord.incomes.reduce((s, i) => s + (i.amount || 0), 0);
   const totalSavings = currentRecord.savingsInvestments.reduce((s, i) => s + (i.amount || 0), 0);
 
-  const consumerExpense = currentRecord.transactions
-    .filter(isConsumerTransaction)
-    .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const consumerTransactions = currentRecord.transactions.filter(isConsumerTransaction);
+  const livingExpense = consumerTransactions.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const consumerExpense = livingExpense;
 
-  const livingExpense = consumerExpense;
+  // Living category breakdown
+  const livingCategoryMap: Record<string, { amount: number; count: number }> = {};
+  consumerTransactions.forEach((t) => {
+    const cat = t.category || '기타소비';
+    if (!livingCategoryMap[cat]) {
+      livingCategoryMap[cat] = { amount: 0, count: 0 };
+    }
+    livingCategoryMap[cat].amount += Number(t.amount) || 0;
+    livingCategoryMap[cat].count += 1;
+  });
 
-  const loanPayments = GlobalMockDataStore.getMonthlyLoanPayments(currentRecord.year, currentRecord.month);
-  const debtCount = loanPayments.length;
-  const isActualInterestUsed = loanPayments.some((p) => p.actualInterest !== null && p.actualInterest !== undefined);
-  const financialCost = loanPayments.reduce(
-    (s, p) => s + (p.actualInterest ?? p.estimatedInterest ?? 0),
-    0
-  );
+  const livingCategoryBreakdown = Object.entries(livingCategoryMap).map(([name, data]) => ({
+    name,
+    amount: data.amount,
+    count: data.count,
+    pct: livingExpense > 0 ? Math.round((data.amount / livingExpense) * 100) : 0,
+  }));
 
-  const debtPrincipal = currentRecord.transactions
-    .filter((t) => {
-      if (t.isIncome) return false;
-      const cls = t.classification;
-      if (cls) {
-        return (
-          cls.classificationType === 'debt_principal' ||
-          cls.exclusionReason === 'debt_principal_repayment' ||
-          cls.exclusionReason === 'debt'
-        );
-      }
-      const cat = t.category || '';
-      return t.type === 'debt' || cat.includes('부채상환') || cat.includes('원금상환');
-    })
-    .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  // Opening Snapshot & Debt Interest Calculation
+  const monthKey = normalizeMonthKey(currentRecord.month || selectedMonth || '2026-04');
+  const snapshotStatus = SnapshotService.getOpeningSnapshotStatus(monthKey);
+  const financialCostResult = calculateMonthFinancialCost(monthKey);
+  const hasConfirmedOpeningForMonth = financialCostResult.hasSnapshot;
+  const snapshotDebtsForMonth = SnapshotService.getDebtSnapshotsByMonth(monthKey).filter((d) => d.isIncluded !== false);
+  const interestBreakdownList = financialCostResult.items;
+
+  const isLockedSettlement = currentRecord.status === '결산잠금';
+
+  // Check if locked settlement has 0 or uncalculated financial cost due to prior snapshot lookup error
+  const isLockedWithSnapshotLookupError =
+    isLockedSettlement &&
+    hasConfirmedOpeningForMonth &&
+    (currentRecord.financialCost === 0 || currentRecord.financialCost === undefined) &&
+    financialCostResult.totalCost > 0;
+
+  const financialCost = (isLockedSettlement && currentRecord.financialCost !== undefined && !isLockedWithSnapshotLookupError)
+    ? currentRecord.financialCost
+    : financialCostResult.totalCost;
+
+  const isFinancialCostMismatchWithSnapshot =
+    isLockedSettlement &&
+    !isLockedWithSnapshotLookupError &&
+    currentRecord.financialCost !== undefined &&
+    currentRecord.financialCost !== financialCostResult.totalCost;
+
+  const debtCount = interestBreakdownList.length;
+
+  // Debt Principal Repayments
+  const csvDebtPrincipalTxs = currentRecord.transactions.filter((t) => {
+    if (t.isIncome) return false;
+    const cls = t.classification;
+    if (cls) {
+      return (
+        cls.classificationType === 'debt_principal' ||
+        cls.exclusionReason === 'debt_principal_repayment' ||
+        cls.exclusionReason === 'debt'
+      );
+    }
+    const cat = t.category || '';
+    return t.type === 'debt' || cat.includes('부채상환') || cat.includes('원금상환');
+  });
+
+  const csvDebtPrincipalItems = csvDebtPrincipalTxs.map((t) => ({
+    id: t.id,
+    title: t.merchant,
+    amount: Number(t.amount) || 0,
+    sourceType: 'csv' as const,
+    sourceLabel: 'CSV 확정 내역',
+    detail: `${t.date} • ${t.category || '원금상환'}`,
+  }));
+
+  const snapshotScheduledItems = (hasConfirmedOpeningForMonth ? snapshotDebtsForMonth : [])
+    .filter((d) => (Number(d.scheduledPrincipalRepayment) || 0) > 0)
+    .map((d) => ({
+      id: `snap-rep-${d.id}`,
+      title: `${d.debtNameSnapshot || '부채'} 예정 원금상환`,
+      amount: Number(d.scheduledPrincipalRepayment) || 0,
+      sourceType: 'snapshot' as const,
+      sourceLabel: '스냅샷 예정 상환액',
+      detail: `${d.creditorNameSnapshot || '금융기관'} • 스냅샷 설정`,
+    }));
+
+  const debtPrincipalItems = [...csvDebtPrincipalItems, ...snapshotScheduledItems];
+  const debtPrincipal = debtPrincipalItems.reduce((s, i) => s + i.amount, 0);
 
   const totalCashOutflow = consumerExpense + financialCost + debtPrincipal + totalSavings;
   const netCashFlow = totalIncome - totalCashOutflow;
@@ -1259,17 +1356,68 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
     const isConsumer = cls ? cls.classificationType === 'consumer' : t.type === 'living';
     const isExcluded = cls ? cls.classificationType === 'excluded' : (t.type === 'business' || t.type === 'financial' || t.type === 'debt');
 
-    if (reviewFilter === 'needsReview') return isNeedsReview;
-    if (reviewFilter === 'consumer') {
+    if (reviewFilter === 'needsReview') {
+      if (!isNeedsReview) return false;
+    } else if (reviewFilter === 'consumer') {
       if (!isConsumer || isPending) return false;
       if (consumerSubFilter !== 'all') {
-        return cls?.majorCategory === consumerSubFilter;
+        if (cls?.majorCategory !== consumerSubFilter) return false;
       }
-      return true;
+    } else if (reviewFilter === 'excluded') {
+      if (!isExcluded || isPending) return false;
     }
-    if (reviewFilter === 'excluded') {
-      return isExcluded && !isPending;
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      const qNoComma = q.replace(/,/g, '');
+
+      // 1. Amount matching
+      let amountMatch = false;
+      if (t.amount !== undefined && t.amount !== null) {
+        const rawAmt = String(t.amount);
+        const formattedAmt = t.amount.toLocaleString('ko-KR');
+        if (rawAmt.includes(qNoComma) || formattedAmt.toLowerCase().includes(q)) {
+          amountMatch = true;
+        }
+      }
+
+      // 2. Text fields matching
+      const statusKeywords = [
+        isPending ? '분류대기 분류 대기 미분류' : '',
+        isNeedsReview ? '확인필요 확인 필요 검토' : '',
+        isUserConfirmed ? '검토완료 검토 완료 사용자확인 승인' : '',
+        isConsumer ? '소비' : '',
+        isExcluded ? '제외' : '',
+      ].join(' ');
+
+      const exclusionLabel = cls?.exclusionReason ? getExclusionReasonLabel(cls.exclusionReason) : '';
+
+      const textFields = [
+        t.merchant,
+        (t as any).merchantOriginal,
+        (t as any).merchantMaster,
+        (t as any).transactionType,
+        (t as any).transferMemo,
+        t.memo,
+        (t as any).userMemo,
+        t.category,
+        cls?.majorCategory,
+        cls?.minorCategory,
+        cls?.exclusionReason,
+        cls?.exclusionType,
+        exclusionLabel,
+        cls?.userQuestion,
+        statusKeywords,
+      ];
+
+      const textMatch = textFields.some((field) => {
+        if (!field) return false;
+        return String(field).toLowerCase().includes(q);
+      });
+
+      if (!amountMatch && !textMatch) return false;
     }
+
     return true;
   });
 
@@ -1374,43 +1522,422 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
             </div>
           </section>
 
-          {/* Breakdown Items Grid */}
-          <section className="grid grid-cols-3 gap-3 text-xs">
-            <div className="bg-white p-3.5 rounded-xl border border-[#c5c5d3]/30 shadow-2xs">
-              <span className="text-[#757682] block mb-1 font-medium">생활지출</span>
-              <span className="font-dohyeon text-sm text-[#ba1a1a]">
-                {formatKRW(livingExpense)}원
-              </span>
-            </div>
-            <div className="bg-white p-3.5 rounded-xl border border-[#c5c5d3]/30 shadow-2xs">
-              <span className="text-[#757682] block mb-1 font-medium">금융비용 (이자)</span>
-              <span className="font-dohyeon text-sm text-[#d97706] block">
-                {formatKRW(financialCost)}원
-              </span>
-              <span className="text-[10px] text-[#757682] mt-1 block">
-                기본정보 부채 {debtCount}건 기준 ({isActualInterestUsed ? '실제 금액' : '예상 금액'})
-              </span>
-            </div>
-            <div className="bg-white p-3.5 rounded-xl border border-[#c5c5d3]/30 shadow-2xs">
-              <span className="text-[#757682] block mb-1 font-medium">부채상환 원금</span>
-              <span className="font-dohyeon text-sm text-[#444651] block">
-                {formatKRW(debtPrincipal)}원
-              </span>
-              <span className="text-[10px] text-[#757682] mt-1 block">
-                CSV 원금상환 지정건
-              </span>
-            </div>
-            <div className="col-span-3 bg-[#f0f4fd] p-3.5 rounded-xl border border-[#00236f]/20 flex justify-between items-center">
+          {/* ② 이번 달 특이사항 Card (New) */}
+          <section className="bg-white p-5 rounded-2xl border border-[#c5c5d3]/30 shadow-xs space-y-3">
+            <div className="flex items-center gap-2 border-b border-[#eceef0] pb-2.5">
+              <span className="material-symbols-outlined text-lg text-[#00236f]">edit_note</span>
               <div>
-                <span className="text-[#00236f] font-bold block">저축·투자 (자산증가)</span>
-                <span className="text-[11px] text-[#757682]">
-                  {currentRecord.savingsInvestments.length}건 등록됨
+                <h3 className="font-dohyeon text-base text-[#00236f]">이번 달 특이사항</h3>
+                <p className="text-[11px] text-[#757682]">
+                  이번 달 숫자가 평소와 달라진 이유나 중요한 자금 흐름을 기록해 두세요
+                </p>
+              </div>
+            </div>
+
+            <textarea
+              value={currentRecord.specialNotes || ''}
+              onChange={(e) => {
+                const val = e.target.value;
+                updateCurrentRecord((prev) => ({
+                  ...prev,
+                  specialNotes: val,
+                }));
+              }}
+              placeholder={`예: 현하우스 임차보증금 입금,\n신규 스타일리스트 입사로 매출 증가,\n증가한 현금으로 차입금 원금 상환`}
+              className="w-full p-3.5 bg-[#f8f9fc] border border-[#e1e2ec] rounded-xl text-xs text-[#191c1e] placeholder-[#a4a5b2] focus:outline-none focus:border-[#00236f] focus:bg-white focus:ring-1 focus:ring-[#00236f] transition-all resize-none min-h-[90px] leading-relaxed"
+              rows={3}
+            />
+          </section>
+
+          {/* Requirement 3 & 4: 4개 핵심 항목 카드 확장/접힘 UI 및 근거 추적 */}
+          <section className="space-y-3 text-xs">
+            {/* Cards Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* 1. 생활지출 Card */}
+              <div
+                onClick={() => setExpandedCard(expandedCard === 'living' ? 'none' : 'living')}
+                className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-2xs ${
+                  expandedCard === 'living'
+                    ? 'bg-[#fff5f5] border-[#ba1a1a] ring-2 ring-[#ba1a1a]/20'
+                    : 'bg-white border-[#c5c5d3]/30 hover:border-[#ba1a1a]/50'
+                }`}
+              >
+                <div className="flex justify-between items-start mb-1">
+                  <span className="text-[#757682] font-semibold flex items-center gap-1">
+                    <span className="material-symbols-outlined text-sm text-[#ba1a1a]">shopping_bag</span>
+                    생활지출
+                  </span>
+                  <span className="material-symbols-outlined text-sm text-[#757682]">
+                    {expandedCard === 'living' ? 'expand_less' : 'expand_more'}
+                  </span>
+                </div>
+                <span className="font-dohyeon text-lg text-[#ba1a1a] block">
+                  {formatKRW(livingExpense)}원
+                </span>
+                <span className="text-[10px] text-[#757682] mt-1 block">
+                  {consumerTransactions.length}건 소비지출 • 클릭 시 상세 근거
                 </span>
               </div>
-              <span className="font-dohyeon text-base text-[#006c49]">
-                +{formatKRW(totalSavings)}원
-              </span>
+
+              {/* 2. 금융비용 (이자) Card */}
+              <div
+                onClick={() => setExpandedCard(expandedCard === 'financial' ? 'none' : 'financial')}
+                className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-2xs ${
+                  expandedCard === 'financial'
+                    ? 'bg-[#fffbeb] border-[#d97706] ring-2 ring-[#d97706]/20'
+                    : 'bg-white border-[#c5c5d3]/30 hover:border-[#d97706]/50'
+                }`}
+              >
+                <div className="flex justify-between items-start mb-1">
+                  <span className="text-[#757682] font-semibold flex items-center gap-1">
+                    <span className="material-symbols-outlined text-sm text-[#d97706]">percent</span>
+                    금융비용 (이자)
+                  </span>
+                  <span className="material-symbols-outlined text-sm text-[#757682]">
+                    {expandedCard === 'financial' ? 'expand_less' : 'expand_more'}
+                  </span>
+                </div>
+                {hasConfirmedOpeningForMonth ? (
+                  <>
+                    <span className="font-dohyeon text-lg text-[#d97706] block">
+                      {formatKRW(financialCost)}원
+                    </span>
+                    {isLockedWithSnapshotLookupError ? (
+                      <div className="mt-1 flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-[#ba1a1a] block leading-tight font-semibold">
+                          확정 당시 스냅샷 조회 오류로 금융비용이 계산되지 않았습니다
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            updateCurrentRecord((rec) => ({
+                              ...rec,
+                              financialCost: financialCostResult.totalCost,
+                            }));
+                          }}
+                          className="px-2 py-0.5 bg-[#d97706] text-white font-bold text-[10px] rounded hover:bg-[#b45309] transition-colors cursor-pointer shrink-0"
+                        >
+                          금융비용 다시 계산
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-[#757682] mt-1 block">
+                        {debtCount}건 부채 이자 추정합계 • 클릭 시 상세 근거
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <span className="font-dohyeon text-sm text-[#757682] block mt-1">
+                      계산 불가 (스냅샷 없음)
+                    </span>
+                    <span className="text-[10px] text-[#ba1a1a] mt-1 block leading-tight">
+                      선택한 월의 확정 자산·부채 스냅샷이 없어 금융비용을 계산할 수 없습니다
+                    </span>
+                  </>
+                )}
+              </div>
+
+              {/* 3. 부채상환 원금 Card */}
+              <div
+                onClick={() => setExpandedCard(expandedCard === 'debt' ? 'none' : 'debt')}
+                className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-2xs ${
+                  expandedCard === 'debt'
+                    ? 'bg-[#f4f4f6] border-[#00236f] ring-2 ring-[#00236f]/20'
+                    : 'bg-white border-[#c5c5d3]/30 hover:border-[#00236f]/50'
+                }`}
+              >
+                <div className="flex justify-between items-start mb-1">
+                  <span className="text-[#757682] font-semibold flex items-center gap-1">
+                    <span className="material-symbols-outlined text-sm text-[#00236f]">account_balance</span>
+                    부채상환 원금
+                  </span>
+                  <span className="material-symbols-outlined text-sm text-[#757682]">
+                    {expandedCard === 'debt' ? 'expand_less' : 'expand_more'}
+                  </span>
+                </div>
+                <span className="font-dohyeon text-lg text-[#00236f] block">
+                  {formatKRW(debtPrincipal)}원
+                </span>
+                <span className="text-[10px] text-[#757682] mt-1 block">
+                  CSV 원금상환 + 예정 원금상환 • 클릭 시 상세 근거
+                </span>
+              </div>
             </div>
+
+            {/* 4. 저축·투자 Card */}
+            <div
+              onClick={() => setExpandedCard(expandedCard === 'savings' ? 'none' : 'savings')}
+              className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-2xs flex justify-between items-center ${
+                expandedCard === 'savings'
+                  ? 'bg-[#e8f5e9] border-[#006c49] ring-2 ring-[#006c49]/20'
+                  : 'bg-[#f0f4fd] border-[#00236f]/20 hover:border-[#006c49]/50'
+              }`}
+            >
+              <div>
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <span className="material-symbols-outlined text-base text-[#006c49]">savings</span>
+                  <span className="text-[#00236f] font-bold">저축·투자 (자산증가)</span>
+                </div>
+                <span className="text-[11px] text-[#757682]">
+                  {currentRecord.savingsInvestments.length}건 등록 • 클릭 시 상세 목록 보기
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-dohyeon text-lg text-[#006c49]">
+                  +{formatKRW(totalSavings)}원
+                </span>
+                <span className="material-symbols-outlined text-sm text-[#757682]">
+                  {expandedCard === 'savings' ? 'expand_less' : 'expand_more'}
+                </span>
+              </div>
+            </div>
+
+            {/* ================= Expanded Details Panels ================= */}
+            {expandedCard === 'living' && (
+              <div className="bg-white p-5 rounded-2xl border border-[#ba1a1a]/30 shadow-md space-y-4 animate-in fade-in duration-200">
+                <div className="flex justify-between items-center border-b border-[#eceef0] pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[#ba1a1a]">shopping_bag</span>
+                    <div>
+                      <h4 className="font-dohyeon text-base text-[#191c1e]">생활지출 산출 근거 상세</h4>
+                      <p className="text-[11px] text-[#757682]">CSV 소비 트랜잭션 카테고리별 분류 및 내역</p>
+                    </div>
+                  </div>
+                  <span className="font-dohyeon text-base text-[#ba1a1a]">{formatKRW(livingExpense)}원</span>
+                </div>
+
+                {/* Category breakdown */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {livingCategoryBreakdown.map((cat) => (
+                    <div key={cat.name} className="bg-[#f8f9fc] p-3 rounded-xl border border-[#e1e2ec]">
+                      <span className="text-[11px] text-[#757682] block">{cat.name}</span>
+                      <span className="font-bold text-sm text-[#191c1e] block mt-0.5">{formatKRW(cat.amount)}원</span>
+                      <span className="text-[10px] text-[#006c49]">{cat.count}건 ({cat.pct}%)</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Transaction list */}
+                <div className="space-y-2">
+                  <h5 className="font-bold text-xs text-[#444651]">소비 트랜잭션 목록 ({consumerTransactions.length}건)</h5>
+                  {consumerTransactions.length === 0 ? (
+                    <p className="text-xs text-[#757682] py-2">등록된 소비 지출 내역이 없습니다.</p>
+                  ) : (
+                    <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                      {consumerTransactions.map((tx) => (
+                        <div key={tx.id} className="flex justify-between items-center p-2.5 bg-[#f8f9fc] rounded-lg text-xs">
+                          <div>
+                            <span className="font-semibold text-[#191c1e] block">{tx.merchant}</span>
+                            <span className="text-[10px] text-[#757682]">{tx.date} • {tx.category || '생활지출'}</span>
+                          </div>
+                          <span className="font-bold text-[#ba1a1a]">-{formatKRW(Number(tx.amount))}원</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {expandedCard === 'financial' && (
+              <div className="bg-white p-5 rounded-2xl border border-[#d97706]/30 shadow-md space-y-4 animate-in fade-in duration-200">
+                <div className="flex justify-between items-center border-b border-[#eceef0] pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[#d97706]">percent</span>
+                    <div>
+                      <h4 className="font-dohyeon text-base text-[#191c1e]">금융비용(이자) 산출 근거 상세</h4>
+                      <p className="text-[11px] text-[#757682]">
+                        {hasConfirmedOpeningForMonth
+                          ? `출처: ${formatMonthKorean(monthKey)} 확정 스냅샷 잔액 + 기본정보 금리`
+                          : '확정 스냅샷 없음'}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="font-dohyeon text-base text-[#d97706]">
+                    {hasConfirmedOpeningForMonth ? `${formatKRW(financialCost)}원` : '0원'}
+                  </span>
+                </div>
+
+                {!hasConfirmedOpeningForMonth ? (
+                  <div className="bg-[#fff5f5] p-4 rounded-xl border border-[#ffdad6] text-xs text-[#ba1a1a] space-y-2">
+                    <div className="flex items-center gap-2 font-bold">
+                      <span className="material-symbols-outlined text-base">warning</span>
+                      <span>선택한 월의 확정 자산·부채 스냅샷이 없어 금융비용을 계산할 수 없습니다</span>
+                    </div>
+                    <p className="text-[11px] text-[#757682]">
+                      과거 기본정보 마스터 잔액을 임의로 대입하지 않으며, 해당 월의 Confirmed opening snapshot에 기재된 부채 잔액을 기준으로 이자가 계산됩니다.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsOpeningSnapshotModalOpen(true);
+                      }}
+                      className="mt-2 px-3 py-1.5 bg-[#00236f] text-white font-bold text-xs rounded-lg hover:bg-[#1e3a8a] transition-colors cursor-pointer"
+                    >
+                      {snapshotStatus === 'confirmed'
+                        ? `${formatMonthKorean(monthKey)} 시작 스냅샷 보기`
+                        : snapshotStatus === 'draft'
+                        ? `${formatMonthKorean(monthKey)} 시작 스냅샷 이어쓰기`
+                        : `${formatMonthKorean(monthKey)} 시작 스냅샷 작성하기`}
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {isLockedWithSnapshotLookupError && (
+                      <div className="bg-[#fff8f1] p-3.5 rounded-xl border border-[#ffddb8] text-xs text-[#824700] space-y-2 mb-3">
+                        <div className="flex items-center gap-2 font-bold">
+                          <span className="material-symbols-outlined text-base text-[#d97706]">warning</span>
+                          <span>확정 당시 스냅샷 조회 오류로 금융비용이 계산되지 않았습니다</span>
+                        </div>
+                        <p className="text-[11px] text-[#757682]">
+                          현재 확정 스냅샷 기준 계산된 금융비용은 <strong>{formatKRW(financialCostResult.totalCost)}원</strong>입니다. 아래 버튼을 클릭하여 확정 결산의 금융비용을 다시 계산하여 반영할 수 있습니다.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            updateCurrentRecord((rec) => ({
+                              ...rec,
+                              financialCost: financialCostResult.totalCost,
+                            }));
+                          }}
+                          className="px-3 py-1.5 bg-[#d97706] text-white font-bold text-xs rounded-lg hover:bg-[#b45309] transition-colors cursor-pointer"
+                        >
+                          금융비용 다시 계산
+                        </button>
+                      </div>
+                    )}
+
+                    {isFinancialCostMismatchWithSnapshot && (
+                      <div className="bg-[#fff8f1] p-3 rounded-xl border border-[#ffddb8] text-[11px] text-[#824700] flex items-center gap-2">
+                        <span className="material-symbols-outlined text-sm">info</span>
+                        <span>확정된 결산의 금융비용과 수정된 자산·부채 스냅샷 값이 다를 수 있습니다.</span>
+                      </div>
+                    )}
+
+                    <div className="bg-[#fffbeb] p-3 rounded-xl border border-[#fef3c7] text-[11px] text-[#b45309] flex items-center gap-2">
+                      <span className="material-symbols-outlined text-sm">info</span>
+                      <span>
+                        {formatMonthKorean(monthKey)} 확정 스냅샷의 부채 원금잔액과 기본정보 마스터의 연금리를 조합하여 월 이자를 산출합니다. (공식: 원금 × 연금리 / 12)
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      {interestBreakdownList.length === 0 ? (
+                        <p className="text-xs text-[#757682] py-2">등록된 부채 내역이 없습니다.</p>
+                      ) : (
+                        interestBreakdownList.map((item) => (
+                          <div key={item.id} className="p-3 bg-[#f8f9fc] rounded-xl border border-[#e1e2ec] flex justify-between items-center text-xs">
+                            <div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-[#191c1e]">{item.name}</span>
+                                <span className="text-[10px] px-1.5 py-0.2 bg-[#f0f4fd] text-[#00236f] rounded font-semibold">{item.creditor}</span>
+                                {item.isHistorical && (
+                                  <span className="text-[10px] px-1.5 py-0.2 bg-[#fef3c7] text-[#92400e] rounded font-bold">과거전용</span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-[#757682] mt-1 space-y-0.5">
+                                <p>
+                                  스냅샷 잔액: <strong className="text-[#191c1e]">{formatKRW(item.principal)}원</strong>
+                                  {item.hasRate ? ` • 연금리: ${item.rate}%` : ' • 금리 정보 없음'}
+                                </p>
+                                <p className="text-[10px] text-[#006c49]">출처: {item.sourceTag}</p>
+                              </div>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <span className="font-bold text-sm text-[#d97706]">
+                                {item.hasRate ? `${formatKRW(item.monthlyInterest)}원` : '0원 (금리 미등록)'}
+                              </span>
+                              <span className="text-[10px] text-[#757682] block">월 예상 이자</span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {expandedCard === 'debt' && (
+              <div className="bg-white p-5 rounded-2xl border border-[#00236f]/30 shadow-md space-y-4 animate-in fade-in duration-200">
+                <div className="flex justify-between items-center border-b border-[#eceef0] pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[#00236f]">account_balance</span>
+                    <div>
+                      <h4 className="font-dohyeon text-base text-[#191c1e]">부채상환 원금 산출 근거 상세</h4>
+                      <p className="text-[11px] text-[#757682]">CSV 확정 상환 내역 + 스냅샷 예정 원금 상환액 합산</p>
+                    </div>
+                  </div>
+                  <span className="font-dohyeon text-base text-[#00236f]">{formatKRW(debtPrincipal)}원</span>
+                </div>
+
+                <div className="bg-[#f0f4fd] p-3 rounded-xl border border-[#00236f]/20 text-[11px] text-[#00236f] flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-sm">verified</span>
+                    <span>검증 완료: 계좌간 내부송금, 사업경비, 자산이동 항목은 원금상환에서 엄격히 제외됨</span>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <h5 className="font-bold text-xs text-[#444651]">원금상환 세부 구성 목록</h5>
+                  {debtPrincipalItems.map((item) => (
+                    <div key={item.id} className="p-3 bg-[#f8f9fc] rounded-xl border border-[#e1e2ec] flex justify-between items-center text-xs">
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-[#191c1e]">{item.title}</span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                            item.sourceType === 'csv' ? 'bg-[#e8edff] text-[#00236f]' : 'bg-[#e6f4ea] text-[#006c49]'
+                          }`}>
+                            {item.sourceLabel}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-[#757682] block mt-0.5">{item.detail}</span>
+                      </div>
+                      <span className="font-bold text-sm text-[#00236f]">{formatKRW(item.amount)}원</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {expandedCard === 'savings' && (
+              <div className="bg-white p-5 rounded-2xl border border-[#006c49]/30 shadow-md space-y-4 animate-in fade-in duration-200">
+                <div className="flex justify-between items-center border-b border-[#eceef0] pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[#006c49]">savings</span>
+                    <div>
+                      <h4 className="font-dohyeon text-base text-[#191c1e]">저축·투자 (자산증가) 상세 목록</h4>
+                      <p className="text-[11px] text-[#757682]">등록된 적금, 예금, 주식, ETF 등 순자산 형성 항목</p>
+                    </div>
+                  </div>
+                  <span className="font-dohyeon text-base text-[#006c49]">+{formatKRW(totalSavings)}원</span>
+                </div>
+
+                {currentRecord.savingsInvestments.length === 0 ? (
+                  <p className="text-xs text-[#757682] py-2">등록된 저축/투자 내역이 없습니다.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {currentRecord.savingsInvestments.map((sav) => (
+                      <div key={sav.id} className="p-3 bg-[#f8f9fc] rounded-xl border border-[#e1e2ec] flex justify-between items-center text-xs">
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-[#191c1e]">{sav.name}</span>
+                            <span className="text-[10px] px-2 py-0.5 bg-[#e6f4ea] text-[#006c49] rounded font-bold">{sav.type}</span>
+                            <span className="text-[10px] px-1.5 py-0.2 bg-[#f2f4f6] text-[#444651] rounded">{sav.tradeType}</span>
+                          </div>
+                          {sav.memo && <span className="text-[11px] text-[#757682] block mt-0.5">{sav.memo}</span>}
+                        </div>
+                        <span className="font-bold text-sm text-[#006c49]">+{formatKRW(sav.amount)}원</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </section>
 
           {/* AI Monthly Report Section */}
@@ -1452,12 +1979,24 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                 </p>
               </div>
 
+              {currentRecord.specialNotes && currentRecord.specialNotes.trim() !== '' && (
+                <div className="bg-[#f0fdf4] p-3.5 rounded-xl border border-[#bbf7d0]">
+                  <span className="font-bold text-[#166534] block mb-1">📝 작성하신 특이사항 반영</span>
+                  <p className="text-[#166534]">
+                    기록하신 이번 달 특이사항(&quot;{currentRecord.specialNotes.trim()}&quot;)을 고려할 때, 이번 달 자금 흐름의 변동 요인이 명확히 설명됩니다.
+                  </p>
+                </div>
+              )}
+
               <div className="bg-[#f0f4fd] p-3.5 rounded-xl border border-[#00236f]/20">
                 <span className="font-bold text-[#00236f] block mb-1">
                   💡 다음 달 자금운용 핵심 제안
                 </span>
                 <p className="text-[#00236f]">
                   대출 원금 상환 비중을 유지하고, 예비비를 가계/사업 통장에 분리해 잉여 자금을 체계적으로 관리하세요.
+                  {currentRecord.specialNotes && currentRecord.specialNotes.trim() !== ''
+                    ? ` (작성하신 특이사항 '${currentRecord.specialNotes.trim()}' 관련 자금 후속 관리도 함께 유의하세요.)`
+                    : ''}
                 </p>
               </div>
             </div>
@@ -2482,7 +3021,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
 
             return (
               <section className="bg-white p-5 rounded-2xl border border-[#c5c5d3]/30 shadow-xs space-y-4 animate-fadeIn">
-                <div className="flex justify-between items-start">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                   <div>
                     <span className="text-xs font-bold text-[#00236f] bg-[#00236f]/10 px-2.5 py-1 rounded-md mb-2 inline-block">
                       Step 4 / 거래 검토
@@ -2495,12 +3034,26 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                     </p>
                   </div>
 
-                  <button
-                    onClick={handleApproveAllTx}
-                    className="text-xs text-[#006c49] font-bold bg-[#e6f4ed] px-2.5 py-1.5 rounded-lg border border-[#c3e9d5] hover:bg-[#d2efe0] transition-colors cursor-pointer"
-                  >
-                    모두 승인하기
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
+                    <button
+                      type="button"
+                      onClick={handleApproveAllTx}
+                      className="text-xs text-[#006c49] font-bold bg-[#e6f4ed] px-2.5 py-2 rounded-xl border border-[#c3e9d5] hover:bg-[#d2efe0] transition-colors cursor-pointer whitespace-nowrap"
+                    >
+                      모두 승인하기
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isCompleting || currentRecord.status === '결산잠금'}
+                      onClick={handleConfirmSettlement}
+                      className="px-4 py-2 bg-[#00236f] hover:bg-[#1e3a8a] text-white text-xs font-dohyeon rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                    >
+                      <span className="material-symbols-outlined text-base">
+                        {isCompleting ? 'sync' : 'verified'}
+                      </span>
+                      {isCompleting ? '확정 중...' : '결산 확정'}
+                    </button>
+                  </div>
                 </div>
 
                 {/* 업종 기반 자동분류 엔진 현황 보고서 카드 */}
@@ -2644,12 +3197,88 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                 )}
               </div>
 
+              {/* 거래 검색창 영역 */}
+              <div className="pt-2 border-t border-[#c5c5d3]/20 space-y-2">
+                <form
+                  onSubmit={(e) => e.preventDefault()}
+                  className="relative flex items-center w-full"
+                >
+                  <span className="material-symbols-outlined absolute left-3 text-[#757682] text-lg pointer-events-none">
+                    search
+                  </span>
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                      }
+                    }}
+                    placeholder="거래처, 메모, 분류, 금액 검색"
+                    className="w-full pl-9 pr-9 py-2.5 bg-[#f7f9fb] border border-[#c5c5d3]/50 rounded-xl text-xs text-[#191c1e] placeholder-[#757682] focus:outline-hidden focus:border-[#00236f] focus:bg-white transition-all"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2.5 p-1 text-[#757682] hover:text-[#191c1e] rounded-full transition-colors cursor-pointer flex items-center justify-center"
+                      title="검색어 초기화"
+                    >
+                      <span className="material-symbols-outlined text-base">close</span>
+                    </button>
+                  )}
+                </form>
+
+                <div className="flex items-center justify-between text-[11px] text-[#757682] px-1 font-medium">
+                  <div>
+                    {searchQuery.trim() ? (
+                      <span>
+                        검색 결과 <strong className="text-[#00236f] font-bold">{filteredTransactions.length}건</strong> / 전체 {currentRecord.transactions.length}건
+                      </span>
+                    ) : (
+                      <span>
+                        표시 중 <strong className="text-[#00236f] font-bold">{filteredTransactions.length}건</strong> / 전체 {currentRecord.transactions.length}건
+                      </span>
+                    )}
+                  </div>
+                  {searchQuery.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="text-[#00236f] hover:underline font-semibold cursor-pointer text-[11px]"
+                    >
+                      검색 초기화
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {/* Transactions List */}
               <div className="space-y-2.5">
                 {filteredTransactions.length === 0 ? (
-                  <div className="p-8 text-center text-xs text-[#757682] bg-[#f7f9fb] rounded-xl border border-dashed border-[#c5c5d3]">
-                    해당 필터에 해당하는 거래 내역이 없습니다.
-                  </div>
+                  searchQuery.trim() ? (
+                    <div className="p-8 text-center text-xs text-[#757682] bg-[#f7f9fb] rounded-xl border border-dashed border-[#c5c5d3] space-y-2">
+                      <span className="material-symbols-outlined text-2xl text-[#757682] block">
+                        search_off
+                      </span>
+                      <p className="font-bold text-[#191c1e]">검색 조건에 맞는 거래가 없습니다</p>
+                      <p className="text-[11px] text-[#757682]">
+                        검색어나 필터를 변경하거나 검색을 초기화해 보세요.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        className="mt-2 px-3 py-1.5 bg-white border border-[#c5c5d3] text-[#00236f] font-bold text-xs rounded-lg hover:bg-[#f0f4fd] transition-colors cursor-pointer"
+                      >
+                        검색어 초기화
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="p-8 text-center text-xs text-[#757682] bg-[#f7f9fb] rounded-xl border border-dashed border-[#c5c5d3]">
+                      해당 필터에 해당하는 거래 내역이 없습니다.
+                    </div>
+                  )
                 ) : (
                   filteredTransactions.map((tx) => {
                     const cls = tx.classification;
@@ -2810,11 +3439,15 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
               </div>
 
               <button
-                onClick={handleStep4Complete}
-                className="w-full py-3.5 bg-[#00236f] text-white font-dohyeon text-xs rounded-xl shadow-md hover:bg-[#1e3a8a] transition-all flex items-center justify-center gap-1 cursor-pointer"
+                type="button"
+                disabled={isCompleting || currentRecord.status === '결산잠금'}
+                onClick={handleConfirmSettlement}
+                className="w-full py-3.5 bg-[#00236f] text-white font-dohyeon text-xs rounded-xl shadow-md hover:bg-[#1e3a8a] active:scale-[0.98] transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                다음 단계 (결산 확정)
-                <span className="material-symbols-outlined text-base">arrow_forward</span>
+                <span className="material-symbols-outlined text-base">
+                  {isCompleting ? 'sync' : 'verified'}
+                </span>
+                {isCompleting ? '확정 중...' : '결산 확정'}
               </button>
             </section>
           );
@@ -3071,6 +3704,33 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                     </div>
                   </div>
                 </div>
+              </div>
+
+              {/* 이번 달 특이사항 Card in Step 5 */}
+              <div className="bg-white p-5 rounded-2xl border border-[#c5c5d3]/30 shadow-xs space-y-3">
+                <div className="flex items-center gap-2 border-b border-[#eceef0] pb-2.5">
+                  <span className="material-symbols-outlined text-lg text-[#00236f]">edit_note</span>
+                  <div>
+                    <h3 className="font-dohyeon text-base text-[#00236f]">이번 달 특이사항</h3>
+                    <p className="text-[11px] text-[#757682]">
+                      이번 달 숫자가 평소와 달라진 이유나 중요한 자금 흐름을 기록해 두세요
+                    </p>
+                  </div>
+                </div>
+
+                <textarea
+                  value={currentRecord.specialNotes || ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    updateCurrentRecord((prev) => ({
+                      ...prev,
+                      specialNotes: val,
+                    }));
+                  }}
+                  placeholder={`예: 현하우스 임차보증금 입금,\n신규 스타일리스트 입사로 매출 증가,\n증가한 현금으로 차입금 원금 상환`}
+                  className="w-full p-3.5 bg-[#f8f9fc] border border-[#e1e2ec] rounded-xl text-xs text-[#191c1e] placeholder-[#a4a5b2] focus:outline-none focus:border-[#00236f] focus:bg-white focus:ring-1 focus:ring-[#00236f] transition-all resize-none min-h-[90px] leading-relaxed"
+                  rows={3}
+                />
               </div>
 
               {/* Requirement 9: 안내문 */}
@@ -3376,6 +4036,12 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
           </div>
         </div>
       )}
+
+      <OpeningSnapshotModal
+        isOpen={isOpeningSnapshotModalOpen}
+        onClose={() => setIsOpeningSnapshotModalOpen(false)}
+        selectedMonth={currentRecord.month}
+      />
     </div>
   );
 };

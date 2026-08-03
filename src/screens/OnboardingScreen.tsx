@@ -21,6 +21,13 @@ import {
   getMaturityDateFromMonths,
   validateRepaymentPhases,
 } from '../utils/debtCalculator';
+import {
+  wonToMan,
+  manToWon,
+  formatManInputValue,
+  parseManInputValue,
+  formatKoreanAmountFromMan,
+} from '../utils/amountUtils';
 
 type OnboardingStep =
   | 'intro'
@@ -417,7 +424,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
       setAssetForm({
         assetName: item.assetName,
         assetType: item.assetType,
-        currentValue: item.currentValue ? String(item.currentValue) : '',
+        currentValue: item.currentValue ? String(wonToMan(item.currentValue)) : '',
         memo: item.memo || '',
       });
     } else {
@@ -443,8 +450,8 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
         debtName: item.debtName || '',
         debtType: item.debtType || '주택담보대출',
         lender: item.lender || '',
-        originalPrincipal: item.originalPrincipal ? String(item.originalPrincipal) : '',
-        currentBalance: item.currentBalance ? String(item.currentBalance) : '',
+        originalPrincipal: item.originalPrincipal ? String(wonToMan(item.originalPrincipal)) : '',
+        currentBalance: item.currentBalance ? String(wonToMan(item.currentBalance)) : '',
         loanStartDate: item.loanStartDate || '',
         principalRepaymentStartDate:
           item.principalRepaymentStartDate || item.repaymentStartDate || item.principalStartDate || '',
@@ -460,21 +467,21 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
         paymentDay: item.paymentDay || '매월 25일',
         repaymentMethod: item.repaymentMethod || (toRepaymentMethodLabel(item.repaymentType) as any),
         remainingMonths: remMonths ? String(remMonths) : '',
-        currentPrincipalPayment: item.currentPrincipalPayment ? String(item.currentPrincipalPayment) : '',
-        currentInterestPayment: item.currentInterestPayment ? String(item.currentInterestPayment) : '',
-        currentTotalPayment: item.currentTotalPayment ? String(item.currentTotalPayment) : '',
+        currentPrincipalPayment: item.currentPrincipalPayment ? String(wonToMan(item.currentPrincipalPayment)) : '',
+        currentInterestPayment: item.currentInterestPayment ? String(wonToMan(item.currentInterestPayment)) : '',
+        currentTotalPayment: item.currentTotalPayment ? String(wonToMan(item.currentTotalPayment)) : '',
         calculationBaseDate: item.calculationBaseDate || todayFormatted(),
         memo: item.memo || '',
         manualPaymentOverride: Boolean(
           item.manualPaymentOverride || item.repaymentMethod === '직접설정'
         ),
-        manualPrincipalPayment: item.manualPrincipalPayment ? String(item.manualPrincipalPayment) : '',
-        manualInterestPayment: item.manualInterestPayment ? String(item.manualInterestPayment) : '',
-        manualTotalPayment: item.manualTotalPayment ? String(item.manualTotalPayment) : '',
+        manualPrincipalPayment: item.manualPrincipalPayment ? String(wonToMan(item.manualPrincipalPayment)) : '',
+        manualInterestPayment: item.manualInterestPayment ? String(wonToMan(item.manualInterestPayment)) : '',
+        manualTotalPayment: item.manualTotalPayment ? String(wonToMan(item.manualTotalPayment)) : '',
         manualMonthlyPayment: item.manualMonthlyPayment
-          ? String(item.manualMonthlyPayment)
+          ? String(wonToMan(item.manualMonthlyPayment))
           : item.monthlyPayment
-          ? String(item.monthlyPayment)
+          ? String(wonToMan(item.monthlyPayment))
           : '',
         repaymentPhases: item.repaymentPhases || [],
       });
@@ -614,7 +621,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
 
   const handleSaveAsset = () => {
     if (!assetForm.assetName.trim()) return;
-    const amount = parseNumber(assetForm.currentValue);
+    const amount = manToWon(parseManInputValue(assetForm.currentValue));
     let nextList: OnboardingAsset[] = [];
     if (editingId) {
       nextList = assets.map((a) =>
@@ -645,16 +652,21 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
 
   const handleSaveDebt = () => {
     if (!debtForm.debtName.trim()) return;
-    const origPrincipal = parseNumber(debtForm.originalPrincipal);
-    const balance = parseNumber(debtForm.currentBalance);
+    const origPrincipal = manToWon(parseManInputValue(debtForm.originalPrincipal));
+    const balance = manToWon(parseManInputValue(debtForm.currentBalance));
     const rate = Number(debtForm.interestRate) || 0;
-    const curP = parseNumber(debtForm.currentPrincipalPayment);
-    const curI = parseNumber(debtForm.currentInterestPayment);
-    const curT = parseNumber(debtForm.currentTotalPayment) || (curP + curI);
+    const curP = manToWon(parseManInputValue(debtForm.currentPrincipalPayment));
+    const curI = manToWon(parseManInputValue(debtForm.currentInterestPayment));
+    const curT = manToWon(parseManInputValue(debtForm.currentTotalPayment)) || (curP + curI);
 
     const months =
       Number(debtForm.remainingMonths) ||
       (debtForm.maturityDate ? getRemainingMonthsFromMaturity(debtForm.maturityDate) : 0);
+
+    const manualP = manToWon(parseManInputValue(debtForm.manualPrincipalPayment));
+    const manualI = manToWon(parseManInputValue(debtForm.manualInterestPayment));
+    const manualT = manToWon(parseManInputValue(debtForm.manualTotalPayment));
+    const manualM = manToWon(parseManInputValue(debtForm.manualMonthlyPayment));
 
     const calcRes = calculateCurrentDebtPayment({
       calculationMode: debtForm.calculationMode,
@@ -674,15 +686,15 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
       currentInterestPayment: curI,
       currentTotalPayment: curT,
       manualPaymentOverride: debtForm.manualPaymentOverride,
-      manualPrincipalPayment: parseNumber(debtForm.manualPrincipalPayment),
-      manualInterestPayment: parseNumber(debtForm.manualInterestPayment),
-      manualTotalPayment: parseNumber(debtForm.manualTotalPayment) || parseNumber(debtForm.manualMonthlyPayment),
-      manualMonthlyPayment: parseNumber(debtForm.manualMonthlyPayment) || parseNumber(debtForm.manualTotalPayment),
+      manualPrincipalPayment: manualP,
+      manualInterestPayment: manualI,
+      manualTotalPayment: manualT || manualM,
+      manualMonthlyPayment: manualM || manualT,
       repaymentPhases: debtForm.repaymentPhases,
     });
 
     const finalMonthlyPayment = debtForm.manualPaymentOverride
-      ? parseNumber(debtForm.manualTotalPayment) || parseNumber(debtForm.manualMonthlyPayment) || calcRes.currentTotal
+      ? manualT || manualM || calcRes.currentTotal
       : calcRes.currentTotal;
 
     const nowStr = todayFormatted();
@@ -717,10 +729,10 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
       calculatedInterestPayment: calcRes.currentInterest,
       calculatedMonthlyPayment: calcRes.currentTotal,
       manualPaymentOverride: debtForm.manualPaymentOverride,
-      manualPrincipalPayment: parseNumber(debtForm.manualPrincipalPayment),
-      manualInterestPayment: parseNumber(debtForm.manualInterestPayment),
-      manualTotalPayment: parseNumber(debtForm.manualTotalPayment),
-      manualMonthlyPayment: parseNumber(debtForm.manualMonthlyPayment) || parseNumber(debtForm.manualTotalPayment),
+      manualPrincipalPayment: manualP,
+      manualInterestPayment: manualI,
+      manualTotalPayment: manualT,
+      manualMonthlyPayment: manualM || manualT,
       repaymentPhases: debtForm.repaymentPhases,
       memo: debtForm.memo,
       createdAt: editingId ? debts.find((d) => d.id === editingId)?.createdAt || nowStr : nowStr,
@@ -1951,20 +1963,28 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
 
               <div>
                 <label className="font-bold text-[#444651] mb-1 block">
-                  현재 가치 (원) *
+                  현재 가치 (만원) *
                 </label>
-                <input
-                  type="text"
-                  value={formatNumber(assetForm.currentValue)}
-                  onChange={(e) =>
-                    setAssetForm((prev) => ({
-                      ...prev,
-                      currentValue: e.target.value.replace(/[^0-9]/g, ''),
-                    }))
-                  }
-                  placeholder="예: 1,600,000,000"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-sm font-semibold text-[#00236f] focus:outline-none focus:border-[#00236f]"
-                />
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={formatManInputValue(assetForm.currentValue)}
+                    onChange={(e) =>
+                      setAssetForm((prev) => ({
+                        ...prev,
+                        currentValue: e.target.value.replace(/[^0-9]/g, ''),
+                      }))
+                    }
+                    placeholder="예: 160,000"
+                    className="w-full px-3.5 py-2.5 pr-12 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-sm font-semibold text-[#00236f] focus:outline-none focus:border-[#00236f]"
+                  />
+                  <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-[#757682]">
+                    만원
+                  </span>
+                </div>
+                <p className="text-xs text-[#00236f] font-medium mt-1 text-right">
+                  {formatKoreanAmountFromMan(assetForm.currentValue)}
+                </p>
               </div>
 
               <div>
@@ -2001,12 +2021,12 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
 
       {/* 4. Debt Modal */}
       {activeModal === 'debt' && (() => {
-        const modalOrigPrincipal = parseNumber(debtForm.originalPrincipal);
-        const modalBalance = parseNumber(debtForm.currentBalance);
+        const modalOrigPrincipal = manToWon(parseManInputValue(debtForm.originalPrincipal));
+        const modalBalance = manToWon(parseManInputValue(debtForm.currentBalance));
         const modalRate = Number(debtForm.interestRate) || 0;
-        const modalCurP = parseNumber(debtForm.currentPrincipalPayment);
-        const modalCurI = parseNumber(debtForm.currentInterestPayment);
-        const modalCurT = parseNumber(debtForm.currentTotalPayment) || (modalCurP + modalCurI);
+        const modalCurP = manToWon(parseManInputValue(debtForm.currentPrincipalPayment));
+        const modalCurI = manToWon(parseManInputValue(debtForm.currentInterestPayment));
+        const modalCurT = manToWon(parseManInputValue(debtForm.currentTotalPayment)) || (modalCurP + modalCurI);
 
         const modalMonths =
           Number(debtForm.remainingMonths) ||
@@ -2030,10 +2050,10 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
           currentInterestPayment: modalCurI,
           currentTotalPayment: modalCurT,
           manualPaymentOverride: debtForm.manualPaymentOverride,
-          manualPrincipalPayment: parseNumber(debtForm.manualPrincipalPayment),
-          manualInterestPayment: parseNumber(debtForm.manualInterestPayment),
-          manualTotalPayment: parseNumber(debtForm.manualTotalPayment) || parseNumber(debtForm.manualMonthlyPayment),
-          manualMonthlyPayment: parseNumber(debtForm.manualMonthlyPayment) || parseNumber(debtForm.manualTotalPayment),
+          manualPrincipalPayment: manToWon(parseManInputValue(debtForm.manualPrincipalPayment)),
+          manualInterestPayment: manToWon(parseManInputValue(debtForm.manualInterestPayment)),
+          manualTotalPayment: manToWon(parseManInputValue(debtForm.manualTotalPayment)) || manToWon(parseManInputValue(debtForm.manualMonthlyPayment)),
+          manualMonthlyPayment: manToWon(parseManInputValue(debtForm.manualMonthlyPayment)) || manToWon(parseManInputValue(debtForm.manualTotalPayment)),
           repaymentPhases: debtForm.repaymentPhases,
         });
 
@@ -2046,8 +2066,8 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
             debtName: '주택담보대출 (단계별 상환 예시)',
             debtType: '주택담보대출',
             lender: '국민은행',
-            originalPrincipal: '100000000',
-            currentBalance: '100000000',
+            originalPrincipal: '10000',
+            currentBalance: '10000',
             interestRate: '3.62',
             rateType: '변동금리',
             repaymentMethod: '단계별 상환',
@@ -2083,12 +2103,12 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
             debtName: '과거 대출 내역 미확인 (현재 납부상태 예시)',
             debtType: '주택담보대출',
             lender: '신한은행',
-            currentBalance: '398860000',
+            currentBalance: '39886',
             interestRate: '4.23',
             rateType: '변동금리',
-            currentPrincipalPayment: '1330000',
-            currentInterestPayment: '1250000',
-            currentTotalPayment: '2580000',
+            currentPrincipalPayment: '133',
+            currentInterestPayment: '125',
+            currentTotalPayment: '258',
             remainingMonths: '280',
             maturityDate: '2049-11-01',
             repaymentMethod: '원금균등',
@@ -2257,38 +2277,54 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="font-bold text-[#444651] mb-1 block">
-                          최초 대출금액 (원)
+                          최초 대출금액 (만원)
                         </label>
-                        <input
-                          type="text"
-                          value={formatNumber(debtForm.originalPrincipal)}
-                          onChange={(e) =>
-                            setDebtForm((prev) => ({
-                              ...prev,
-                              originalPrincipal: e.target.value.replace(/[^0-9]/g, ''),
-                            }))
-                          }
-                          placeholder="예: 100,000,000"
-                          className="w-full px-3.5 py-2.5 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-sm font-semibold text-[#191c1e] focus:outline-none focus:border-[#00236f]"
-                        />
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={formatManInputValue(debtForm.originalPrincipal)}
+                            onChange={(e) =>
+                              setDebtForm((prev) => ({
+                                ...prev,
+                                originalPrincipal: e.target.value.replace(/[^0-9]/g, ''),
+                              }))
+                            }
+                            placeholder="예: 10,000"
+                            className="w-full px-3.5 py-2.5 pr-12 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-sm font-semibold text-[#191c1e] focus:outline-none focus:border-[#00236f]"
+                          />
+                          <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-[#757682]">
+                            만원
+                          </span>
+                        </div>
+                        <p className="text-xs text-[#00236f] font-medium mt-1 text-right">
+                          {formatKoreanAmountFromMan(debtForm.originalPrincipal)}
+                        </p>
                       </div>
 
                       <div>
                         <label className="font-bold text-[#444651] mb-1 block">
-                          현재 잔액 (원) *
+                          현재 잔액 (만원) *
                         </label>
-                        <input
-                          type="text"
-                          value={formatNumber(debtForm.currentBalance)}
-                          onChange={(e) =>
-                            setDebtForm((prev) => ({
-                              ...prev,
-                              currentBalance: e.target.value.replace(/[^0-9]/g, ''),
-                            }))
-                          }
-                          placeholder="예: 100,000,000"
-                          className="w-full px-3.5 py-2.5 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-sm font-semibold text-[#ba1a1a] focus:outline-none focus:border-[#00236f]"
-                        />
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={formatManInputValue(debtForm.currentBalance)}
+                            onChange={(e) =>
+                              setDebtForm((prev) => ({
+                                ...prev,
+                                currentBalance: e.target.value.replace(/[^0-9]/g, ''),
+                              }))
+                            }
+                            placeholder="예: 10,000"
+                            className="w-full px-3.5 py-2.5 pr-12 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-sm font-semibold text-[#ba1a1a] focus:outline-none focus:border-[#00236f]"
+                          />
+                          <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-[#757682]">
+                            만원
+                          </span>
+                        </div>
+                        <p className="text-xs text-[#00236f] font-medium mt-1 text-right">
+                          {formatKoreanAmountFromMan(debtForm.currentBalance)}
+                        </p>
                       </div>
                     </div>
 
@@ -2470,20 +2506,28 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="font-bold text-[#444651] mb-1 block">
-                          현재 잔액 (원) *
+                          현재 잔액 (만원) *
                         </label>
-                        <input
-                          type="text"
-                          value={formatNumber(debtForm.currentBalance)}
-                          onChange={(e) =>
-                            setDebtForm((prev) => ({
-                              ...prev,
-                              currentBalance: e.target.value.replace(/[^0-9]/g, ''),
-                            }))
-                          }
-                          placeholder="예: 398,860,000"
-                          className="w-full px-3.5 py-2.5 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-sm font-semibold text-[#ba1a1a] focus:outline-none focus:border-[#00236f]"
-                        />
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={formatManInputValue(debtForm.currentBalance)}
+                            onChange={(e) =>
+                              setDebtForm((prev) => ({
+                                ...prev,
+                                currentBalance: e.target.value.replace(/[^0-9]/g, ''),
+                              }))
+                            }
+                            placeholder="예: 39,886"
+                            className="w-full px-3.5 py-2.5 pr-12 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-sm font-semibold text-[#ba1a1a] focus:outline-none focus:border-[#00236f]"
+                          />
+                          <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-[#757682]">
+                            만원
+                          </span>
+                        </div>
+                        <p className="text-xs text-[#00236f] font-medium mt-1 text-right">
+                          {formatKoreanAmountFromMan(debtForm.currentBalance)}
+                        </p>
                       </div>
 
                       <div>
@@ -2508,69 +2552,93 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
 
                     <div className="grid grid-cols-3 gap-2">
                       <div>
-                        <label className="font-bold text-[#444651] mb-1 block">
-                          현재 월 원금
+                        <label className="font-bold text-[#444651] mb-1 block text-[11px]">
+                          현재 월 원금(만원)
                         </label>
-                        <input
-                          type="text"
-                          value={formatNumber(debtForm.currentPrincipalPayment)}
-                          onChange={(e) => {
-                            const val = e.target.value.replace(/[^0-9]/g, '');
-                            setDebtForm((prev) => {
-                              const p = parseNumber(val);
-                              const i = parseNumber(prev.currentInterestPayment);
-                              return {
-                                ...prev,
-                                currentPrincipalPayment: val,
-                                currentTotalPayment: p + i > 0 ? String(p + i) : prev.currentTotalPayment,
-                              };
-                            });
-                          }}
-                          placeholder="예: 1,330,000"
-                          className="w-full px-2.5 py-2 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-xs font-semibold text-[#191c1e] focus:outline-none focus:border-[#00236f]"
-                        />
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={formatManInputValue(debtForm.currentPrincipalPayment)}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/[^0-9]/g, '');
+                              setDebtForm((prev) => {
+                                const p = parseManInputValue(val);
+                                const i = parseManInputValue(prev.currentInterestPayment);
+                                return {
+                                  ...prev,
+                                  currentPrincipalPayment: val,
+                                  currentTotalPayment: p + i > 0 ? String(p + i) : prev.currentTotalPayment,
+                                };
+                              });
+                            }}
+                            placeholder="예: 133"
+                            className="w-full px-2 py-2 pr-10 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-xs font-semibold text-[#191c1e] focus:outline-none focus:border-[#00236f]"
+                          />
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-[#757682]">
+                            만원
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-[#00236f] font-medium mt-0.5 text-right">
+                          {formatKoreanAmountFromMan(debtForm.currentPrincipalPayment)}
+                        </p>
                       </div>
 
                       <div>
-                        <label className="font-bold text-[#444651] mb-1 block">
-                          현재 월 이자
+                        <label className="font-bold text-[#444651] mb-1 block text-[11px]">
+                          현재 월 이자(만원)
                         </label>
-                        <input
-                          type="text"
-                          value={formatNumber(debtForm.currentInterestPayment)}
-                          onChange={(e) => {
-                            const val = e.target.value.replace(/[^0-9]/g, '');
-                            setDebtForm((prev) => {
-                              const i = parseNumber(val);
-                              const p = parseNumber(prev.currentPrincipalPayment);
-                              return {
-                                ...prev,
-                                currentInterestPayment: val,
-                                currentTotalPayment: p + i > 0 ? String(p + i) : prev.currentTotalPayment,
-                              };
-                            });
-                          }}
-                          placeholder="예: 1,250,000"
-                          className="w-full px-2.5 py-2 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-xs font-semibold text-[#191c1e] focus:outline-none focus:border-[#00236f]"
-                        />
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={formatManInputValue(debtForm.currentInterestPayment)}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/[^0-9]/g, '');
+                              setDebtForm((prev) => {
+                                const i = parseManInputValue(val);
+                                const p = parseManInputValue(prev.currentPrincipalPayment);
+                                return {
+                                  ...prev,
+                                  currentInterestPayment: val,
+                                  currentTotalPayment: p + i > 0 ? String(p + i) : prev.currentTotalPayment,
+                                };
+                              });
+                            }}
+                            placeholder="예: 125"
+                            className="w-full px-2 py-2 pr-10 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-xs font-semibold text-[#191c1e] focus:outline-none focus:border-[#00236f]"
+                          />
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-[#757682]">
+                            만원
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-[#00236f] font-medium mt-0.5 text-right">
+                          {formatKoreanAmountFromMan(debtForm.currentInterestPayment)}
+                        </p>
                       </div>
 
                       <div>
-                        <label className="font-bold text-[#00236f] mb-1 block">
-                          현재 총 납입액
+                        <label className="font-bold text-[#00236f] mb-1 block text-[11px]">
+                          현재 총 납입액(만원)
                         </label>
-                        <input
-                          type="text"
-                          value={formatNumber(debtForm.currentTotalPayment)}
-                          onChange={(e) =>
-                            setDebtForm((prev) => ({
-                              ...prev,
-                              currentTotalPayment: e.target.value.replace(/[^0-9]/g, ''),
-                            }))
-                          }
-                          placeholder="예: 2,580,000"
-                          className="w-full px-2.5 py-2 rounded-xl border border-[#00236f]/30 bg-white text-xs font-bold text-[#00236f] focus:outline-none focus:border-[#00236f]"
-                        />
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={formatManInputValue(debtForm.currentTotalPayment)}
+                            onChange={(e) =>
+                              setDebtForm((prev) => ({
+                                ...prev,
+                                currentTotalPayment: e.target.value.replace(/[^0-9]/g, ''),
+                              }))
+                            }
+                            placeholder="예: 258"
+                            className="w-full px-2 py-2 pr-10 rounded-xl border border-[#00236f]/30 bg-white text-xs font-bold text-[#00236f] focus:outline-none focus:border-[#00236f]"
+                          />
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-[#757682]">
+                            만원
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-[#00236f] font-medium mt-0.5 text-right">
+                          {formatKoreanAmountFromMan(debtForm.currentTotalPayment)}
+                        </p>
                       </div>
                     </div>
 

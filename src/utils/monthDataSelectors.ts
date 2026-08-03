@@ -2,6 +2,8 @@ import { Transaction, ActiveCsvSession } from '../types';
 import { GlobalMockDataStore, ConsumerSpendingSummary } from '../services/dataStore';
 import { isConsumerTransaction } from './consumerExpenseUtils';
 import { getCategoryGroup } from '../data/consumerCategories';
+import { calculateMonthFinancialCost } from './financialCostCalculator';
+import { SnapshotService } from '../services/snapshotService';
 
 /**
  * Standard Month Normalization Result
@@ -91,20 +93,167 @@ export function isTransactionInMonth(tx: Transaction, targetYear: number, target
 }
 
 /**
- * Helper to get the saved Monthly Settlement Record for a given month from cfo_monthly_records_v3
+ * Helper to get the saved Monthly Settlement Record for a given month from cfo_monthly_records_v3.
+ * Returns null if no record is found in localStorage.
  */
-export function getMonthlyRecordForMonth(monthInput: string) {
+export function getMonthlyRecordForMonth(monthInput: string): any {
   const norm = normalizeMonthKey(monthInput);
   try {
     const saved = localStorage.getItem('cfo_monthly_records_v3');
     if (saved) {
       const recordsMap = JSON.parse(saved);
-      return recordsMap[norm.formattedMonth] || null;
+      if (recordsMap[norm.formattedMonth]) {
+        return recordsMap[norm.formattedMonth];
+      }
+      if (recordsMap[norm.yyyyMm]) {
+        return recordsMap[norm.yyyyMm];
+      }
     }
   } catch (e) {
     console.error(e);
   }
   return null;
+}
+
+export interface MonthlySettlementSummaryResult {
+  monthKey: string;              // '2026-04'
+  formattedSelectedMonth: string;// '2026년 4월'
+  status: 'completed' | 'in_progress' | 'none';
+  statusLabel: string;           // '결산 완료' | '결산 작성 중' | '결산 데이터 없음'
+  completedAtDisplay: string | null;
+  hasData: boolean;
+  recordFound: boolean;
+
+  totalIncome: number;           // 총수입
+  totalOutflow: number;          // 총현금유출
+  livingExpense: number;         // 생활지출
+  debtPrincipal: number;         // 부채상환 원금
+
+  financialCost: number;         // 금융비용
+  totalSavings: number;          // 저축/투자
+}
+
+/**
+ * Common Selector: Get unified monthly settlement summary for Home screen and reports.
+ * Reads directly from the confirmed MonthlySettlementRecord stored in cfo_monthly_records_v3.
+ */
+export function getMonthlySettlementSummary(selectedMonthInput: string): MonthlySettlementSummaryResult {
+  const norm = normalizeMonthKey(selectedMonthInput);
+  const currentRecord = getMonthlyRecordForMonth(selectedMonthInput);
+
+  let status: 'completed' | 'in_progress' | 'none' = 'none';
+  let statusLabel = '결산 데이터 없음';
+  let completedAtDisplay: string | null = null;
+
+  if (currentRecord) {
+    if (currentRecord.status === '결산잠금' || currentRecord.status === '완료') {
+      status = 'completed';
+      statusLabel = '결산 완료';
+      if (currentRecord.completedAtDate) {
+        completedAtDisplay = `${currentRecord.completedAtDate} ${currentRecord.completedAtTime || ''}`.trim();
+      }
+    } else if (currentRecord.status === '진행중') {
+      status = 'in_progress';
+      statusLabel = '결산 작성 중';
+    }
+  }
+
+  const hasData = status === 'completed' || status === 'in_progress';
+
+  if (!hasData || !currentRecord) {
+    console.log(
+      `[HomeSettlementSummary]\nmonth=${norm.yyyyMm}\nrecordFound=false\nstatus=none\ntotalIncome=0\ntotalCashOutflow=0\nlivingExpense=0\nprincipalRepayment=0`
+    );
+    return {
+      monthKey: norm.yyyyMm,
+      formattedSelectedMonth: norm.formattedMonth,
+      status: 'none',
+      statusLabel: '결산 데이터 없음',
+      completedAtDisplay: null,
+      hasData: false,
+      recordFound: false,
+      totalIncome: 0,
+      totalOutflow: 0,
+      livingExpense: 0,
+      debtPrincipal: 0,
+      financialCost: 0,
+      totalSavings: 0,
+    };
+  }
+
+  const totalIncome = (currentRecord.incomes || []).reduce(
+    (sum: number, inc: any) => sum + (Number(inc.amount) || 0),
+    0
+  );
+
+  const totalSavings = (currentRecord.savingsInvestments || []).reduce(
+    (sum: number, sav: any) => sum + (Number(sav.amount) || 0),
+    0
+  );
+
+  const consumerTransactions = (currentRecord.transactions || []).filter(isConsumerTransaction);
+  const livingExpense = consumerTransactions.reduce((s: number, t: any) => s + (Number(t.amount) || 0), 0);
+
+  const monthKey = norm.yyyyMm;
+  const financialCostResult = calculateMonthFinancialCost(monthKey);
+  const hasConfirmedOpeningForMonth = financialCostResult.hasSnapshot;
+  const isLockedSettlement = currentRecord.status === '결산잠금' || currentRecord.status === '완료';
+
+  const isLockedWithSnapshotLookupError =
+    isLockedSettlement &&
+    hasConfirmedOpeningForMonth &&
+    (currentRecord.financialCost === 0 || currentRecord.financialCost === undefined) &&
+    financialCostResult.totalCost > 0;
+
+  const financialCost = (isLockedSettlement && currentRecord.financialCost !== undefined && !isLockedWithSnapshotLookupError)
+    ? currentRecord.financialCost
+    : financialCostResult.totalCost;
+
+  const csvDebtPrincipalTxs = (currentRecord.transactions || []).filter((t: any) => {
+    if (t.isIncome) return false;
+    const cls = t.classification;
+    if (cls) {
+      return (
+        cls.classificationType === 'debt_principal' ||
+        cls.exclusionReason === 'debt_principal_repayment' ||
+        cls.exclusionReason === 'debt'
+      );
+    }
+    const cat = t.category || '';
+    return t.type === 'debt' || cat.includes('부채상환') || cat.includes('원금상환');
+  });
+
+  const csvDebtPrincipalSum = csvDebtPrincipalTxs.reduce((s: number, t: any) => s + (Number(t.amount) || 0), 0);
+
+  const snapshotDebtsForMonth = SnapshotService.getDebtSnapshotsByMonth(monthKey).filter((d) => d.isIncluded !== false);
+  const snapshotScheduledItems = (hasConfirmedOpeningForMonth ? snapshotDebtsForMonth : [])
+    .filter((d) => (Number(d.scheduledPrincipalRepayment) || 0) > 0);
+  const snapshotScheduledSum = snapshotScheduledItems.reduce((s: number, d: any) => s + (Number(d.scheduledPrincipalRepayment) || 0), 0);
+
+  const debtPrincipal = csvDebtPrincipalSum + snapshotScheduledSum;
+  const totalOutflow = livingExpense + financialCost + debtPrincipal + totalSavings;
+
+  const statusReported = status === 'completed' ? 'confirmed' : status;
+
+  console.log(
+    `[HomeSettlementSummary]\nmonth=${monthKey}\nrecordFound=true\nstatus=${statusReported}\ntotalIncome=${totalIncome}\ntotalCashOutflow=${totalOutflow}\nlivingExpense=${livingExpense}\nprincipalRepayment=${debtPrincipal}`
+  );
+
+  return {
+    monthKey,
+    formattedSelectedMonth: norm.formattedMonth,
+    status,
+    statusLabel,
+    completedAtDisplay,
+    hasData: true,
+    recordFound: true,
+    totalIncome,
+    totalOutflow,
+    livingExpense,
+    debtPrincipal,
+    financialCost,
+    totalSavings,
+  };
 }
 
 /**

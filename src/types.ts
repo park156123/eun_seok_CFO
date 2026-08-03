@@ -485,5 +485,106 @@ export interface AppData {
   };
 }
 
+// ==================================================
+// Phase 2-A: Monthly Snapshot & Opening Seed Data Models
+// ==================================================
+
+export type SnapshotStatus = 'draft' | 'confirmed';
+
+export type SnapshotSource =
+  | 'opening-seed'
+  | 'carry-forward'
+  | 'settlement'
+  | 'manual-adjustment';
+
+export type DebtMovementType =
+  | 'principal-repayment'
+  | 'additional-borrowing'
+  | 'interest-payment'
+  | 'balance-adjustment';
+
+export interface MonthlySnapshot {
+  id: string;
+  month: string; // YYYY-MM (e.g., '2026-04')
+  status: SnapshotStatus;
+  openingSnapshotId?: string;
+  previousMonth?: string;
+  totalAssets: number;
+  totalDebts: number;
+  netWorth: number;
+  totalIncome?: number;
+  totalExpense?: number;
+  totalFinancialCost?: number;
+  totalPrincipalRepaid?: number;
+  totalSavingsInvestment?: number;
+  cashFlow?: number;
+  createdAt: string;
+  updatedAt: string;
+  confirmedAt?: string;
+  revisedAt?: string;
+  assetSnapshotIds: string[];
+  debtSnapshotIds: string[];
+  source: SnapshotSource;
+  memo?: string;
+  referenceDate?: string; // e.g., '2026-04-01'
+}
+
+export interface AssetSnapshot {
+  id: string;
+  monthlySnapshotId: string;
+  month: string; // YYYY-MM
+  assetId?: string; // Link to Master Asset
+  assetNameSnapshot: string;
+  assetTypeSnapshot: string;
+  value: number;
+  valuationMethod?: string;
+  memo?: string;
+  source: SnapshotSource;
+  createdAt: string;
+  updatedAt: string;
+  isHistoricalOnly?: boolean;
+  isIncluded?: boolean;
+}
+
+export interface DebtSnapshot {
+  id: string;
+  monthlySnapshotId: string;
+  month: string; // YYYY-MM
+  debtId?: string; // Link to Master Debt
+  debtNameSnapshot: string;
+  debtTypeSnapshot: string;
+  creditorNameSnapshot?: string;
+  openingPrincipal: number;
+  scheduledPrincipalRepayment: number;
+  actualPrincipalRepayment: number;
+  additionalBorrowing: number;
+  endingPrincipal: number;
+  interestExpense: number;
+  interestRate?: number;
+  statusAtMonthEnd: 'active' | 'fully-repaid';
+  source: SnapshotSource;
+  memo?: string;
+  createdAt: string;
+  updatedAt: string;
+  isHistoricalOnly?: boolean;
+  linkedDebtId?: string;
+  autoDeductPrincipal?: boolean;
+  isIncluded?: boolean;
+}
+
+export interface MonthlyDebtMovement {
+  id: string;
+  month: string; // YYYY-MM
+  debtId: string;
+  movementType: DebtMovementType;
+  amount: number;
+  occurredAt: string;
+  memo?: string;
+  source: 'automatic-schedule' | 'manual-entry' | 'settlement';
+  createdAt: string;
+  updatedAt: string;
+}
+
+
 
 
