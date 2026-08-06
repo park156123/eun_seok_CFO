@@ -1,3 +1,5 @@
+import { getCategoryTheme } from '../utils/categoryTheme';
+
 export interface ConsumerSubCategory {
   name: string;
   code: string;
@@ -15,8 +17,8 @@ export const CONSUMER_CATEGORY_GROUPS: ConsumerCategoryGroup[] = [
   {
     name: '식비',
     icon: 'restaurant',
-    color: '#1e3a8a',
-    bgLight: '#dbeafe',
+    color: '#d97706',
+    bgLight: '#fef3c7',
     subCategories: [
       { name: '외식', code: 'dining_out' },
       { name: '편의점', code: 'convenience' },
@@ -78,7 +80,7 @@ export const CONSUMER_CATEGORY_GROUPS: ConsumerCategoryGroup[] = [
   },
   {
     name: '보험',
-    icon: 'verified_user',
+    icon: 'shield',
     color: '#059669',
     bgLight: '#d1fae5',
     subCategories: [
@@ -91,8 +93,8 @@ export const CONSUMER_CATEGORY_GROUPS: ConsumerCategoryGroup[] = [
   {
     name: '기타',
     icon: 'more_horiz',
-    color: '#6b7280',
-    bgLight: '#f3f4f6',
+    color: '#64748b',
+    bgLight: '#f1f5f9',
     subCategories: [
       { name: '기부', code: 'donation' },
       { name: '기타지출', code: 'other_expense' },
@@ -101,13 +103,26 @@ export const CONSUMER_CATEGORY_GROUPS: ConsumerCategoryGroup[] = [
 ];
 
 export function getCategoryGroup(majorCategoryStr: string): ConsumerCategoryGroup {
+  const theme = getCategoryTheme(majorCategoryStr);
   const found = CONSUMER_CATEGORY_GROUPS.find(
     (g) => g.name === majorCategoryStr || majorCategoryStr?.includes(g.name)
   );
-  if (found) return found;
+  if (found) {
+    return {
+      ...found,
+      icon: theme.icon,
+      color: theme.color,
+      bgLight: theme.bgLight,
+    };
+  }
 
-  // Fallback
-  return CONSUMER_CATEGORY_GROUPS[CONSUMER_CATEGORY_GROUPS.length - 1]; // 기타
+  return {
+    name: majorCategoryStr || '기타',
+    icon: theme.icon,
+    color: theme.color,
+    bgLight: theme.bgLight,
+    subCategories: [],
+  };
 }
 
 export function parseCategoryString(categoryStr: string): { major: string; minor: string } {

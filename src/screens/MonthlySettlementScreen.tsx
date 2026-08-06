@@ -429,6 +429,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
 
   // Expanded breakdown card state
   const [expandedCard, setExpandedCard] = useState<'none' | 'living' | 'financial' | 'debt' | 'savings'>('none');
+  const [selectedLivingCategory, setSelectedLivingCategory] = useState<string | null>(null);
   const [isOpeningSnapshotModalOpen, setIsOpeningSnapshotModalOpen] = useState(false);
 
   // STEP 3 Local States for upload animation, drag & drop, column mapping, and error handling
@@ -1555,7 +1556,10 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {/* 1. 생활지출 Card */}
               <div
-                onClick={() => setExpandedCard(expandedCard === 'living' ? 'none' : 'living')}
+                onClick={() => {
+                  setExpandedCard(expandedCard === 'living' ? 'none' : 'living');
+                  setSelectedLivingCategory(null);
+                }}
                 className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-2xs ${
                   expandedCard === 'living'
                     ? 'bg-[#fff5f5] border-[#ba1a1a] ring-2 ring-[#ba1a1a]/20'
@@ -1710,34 +1714,109 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
 
                 {/* Category breakdown */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {livingCategoryBreakdown.map((cat) => (
-                    <div key={cat.name} className="bg-[#f8f9fc] p-3 rounded-xl border border-[#e1e2ec]">
-                      <span className="text-[11px] text-[#757682] block">{cat.name}</span>
-                      <span className="font-bold text-sm text-[#191c1e] block mt-0.5">{formatKRW(cat.amount)}원</span>
-                      <span className="text-[10px] text-[#006c49]">{cat.count}건 ({cat.pct}%)</span>
-                    </div>
-                  ))}
+                  {livingCategoryBreakdown.map((cat) => {
+                    const isSelected = selectedLivingCategory === cat.name;
+                    return (
+                      <div
+                        key={cat.name}
+                        onClick={() => {
+                          if (cat.count === 0) return;
+                          setSelectedLivingCategory(isSelected ? null : cat.name);
+                        }}
+                        className={`p-3 rounded-xl border transition-all cursor-pointer select-none text-left ${
+                          isSelected
+                            ? 'bg-[#fff5f5] border-[#ba1a1a] ring-2 ring-[#ba1a1a]/30 shadow-xs'
+                            : 'bg-[#f8f9fc] border-[#e1e2ec] hover:border-[#ba1a1a]/40 hover:bg-[#fff9f9]'
+                        } ${cat.count === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        <div className="flex justify-between items-start">
+                          <span className="text-[11px] text-[#757682] font-semibold truncate block max-w-[85%]">
+                            {cat.name}
+                          </span>
+                          <span className={`material-symbols-outlined text-xs transition-transform ${isSelected ? 'text-[#ba1a1a] rotate-180' : 'text-[#757682]'}`}>
+                            expand_more
+                          </span>
+                        </div>
+                        <span className="font-bold text-sm text-[#191c1e] block mt-0.5">
+                          {formatKRW(cat.amount)}원
+                        </span>
+                        <div className="flex justify-between items-center mt-1 text-[10px]">
+                          <span className="text-[#006c49] font-medium">{cat.count}건 ({cat.pct}%)</span>
+                          {isSelected && (
+                            <span className="text-[#ba1a1a] font-bold">선택됨</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
 
-                {/* Transaction list */}
-                <div className="space-y-2">
-                  <h5 className="font-bold text-xs text-[#444651]">소비 트랜잭션 목록 ({consumerTransactions.length}건)</h5>
-                  {consumerTransactions.length === 0 ? (
-                    <p className="text-xs text-[#757682] py-2">등록된 소비 지출 내역이 없습니다.</p>
-                  ) : (
-                    <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
-                      {consumerTransactions.map((tx) => (
-                        <div key={tx.id} className="flex justify-between items-center p-2.5 bg-[#f8f9fc] rounded-lg text-xs">
-                          <div>
-                            <span className="font-semibold text-[#191c1e] block">{tx.merchant}</span>
-                            <span className="text-[10px] text-[#757682]">{tx.date} • {tx.category || '생활지출'}</span>
-                          </div>
-                          <span className="font-bold text-[#ba1a1a]">-{formatKRW(Number(tx.amount))}원</span>
+                {/* Selected Category Detail List or Initial Guidance */}
+                {selectedLivingCategory ? (() => {
+                  const categoryTxs = consumerTransactions.filter(
+                    (t) => (t.category || '기타소비') === selectedLivingCategory
+                  );
+                  const categoryTotal = categoryTxs.reduce(
+                    (s, t) => s + (Number(t.amount) || 0),
+                    0
+                  );
+
+                  return (
+                    <div className="space-y-2 pt-3 border-t border-[#eceef0] animate-in fade-in duration-150">
+                      <div className="flex justify-between items-center">
+                        <h5 className="font-bold text-xs text-[#191c1e] flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-sm text-[#ba1a1a]">sell</span>
+                          <span>{selectedLivingCategory} 상세 내역 {categoryTxs.length}건</span>
+                        </h5>
+                        <div className="flex items-center gap-2">
+                          <span className="font-dohyeon text-sm text-[#ba1a1a]">
+                            {formatKRW(categoryTotal)}원
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedLivingCategory(null)}
+                            className="text-[11px] text-[#757682] hover:text-[#191c1e] underline cursor-pointer"
+                          >
+                            접기
+                          </button>
                         </div>
-                      ))}
+                      </div>
+
+                      {categoryTxs.length === 0 ? (
+                        <p className="text-xs text-[#757682] py-4 text-center bg-[#f8f9fc] rounded-xl border border-[#e1e2ec]">
+                          해당 카테고리의 거래 내역이 없습니다
+                        </p>
+                      ) : (
+                        <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                          {categoryTxs.map((tx) => (
+                            <div
+                              key={tx.id}
+                              className="flex justify-between items-center p-2.5 bg-[#f8f9fc] rounded-lg text-xs hover:bg-[#f0f4fd] transition-colors"
+                            >
+                              <div className="min-w-0 pr-2">
+                                <span className="font-semibold text-[#191c1e] block truncate">
+                                  {tx.merchant || '거래처'}
+                                </span>
+                                <span className="text-[10px] text-[#757682] block truncate">
+                                  {tx.date}{tx.time ? ` • ${tx.time}` : ''}
+                                  {tx.subCategory ? ` • ${tx.subCategory}` : ''}
+                                  {tx.memo ? ` (${tx.memo})` : ''}
+                                </span>
+                              </div>
+                              <span className="font-bold text-[#ba1a1a] shrink-0">
+                                -{formatKRW(Number(tx.amount))}원
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
+                  );
+                })() : (
+                  <div className="p-3.5 bg-[#f8f9fc] rounded-xl border border-[#e1e2ec] text-center text-xs text-[#757682] font-medium">
+                    카테고리를 선택하면 상세 거래 내역을 확인할 수 있습니다
+                  </div>
+                )}
               </div>
             )}
 

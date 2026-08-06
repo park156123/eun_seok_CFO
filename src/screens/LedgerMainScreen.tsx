@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { ScreenId, Transaction } from '../types';
 import { GlobalMockDataStore } from '../services/dataStore';
-import { ActiveSessionBanner } from '../components/ActiveSessionBanner';
 import { useSelectedMonth } from '../context/SelectedMonthContext';
 import { MonthSelector } from '../components/MonthSelector';
+import { formatSummaryAmountKRW } from '../utils/amountUtils';
+import { getSubCategoryIcon } from '../utils/categoryTheme';
 import {
   getConsumerSubcategoryBreakdown,
   getConsumerTopMerchants,
@@ -127,13 +128,7 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
         />
       </section>
 
-      {/* 1. CSV 분석 정보 (Active Session Info Banner) */}
-      <ActiveSessionBanner
-        showActions={true}
-        onNavigateToSettlement={() => onNavigate('2-3')}
-      />
-
-      {/* 2. 요약 카드 영역 (총 소비지출 Hero + 총수입 / 총현금유출 Grid) */}
+      {/* 1. 요약 카드 영역 (총 소비지출 Hero + 총수입 / 총현금유출 Grid) */}
       <section className="space-y-3">
         {/* Total Expenditure Hero Card (메인 진입점: 클릭 시 2-1 이동) */}
         <div
@@ -403,16 +398,16 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
                     onClick={() => setExpandedCategory(isExpanded ? null : item.category)}
                     className="cursor-pointer space-y-1.5 select-none"
                   >
-                    <div className="flex justify-between items-center text-xs font-semibold text-[#191c1e]">
-                      <span className="flex items-center gap-1.5">
-                        <span className="material-symbols-outlined text-base" style={{ color: item.group.color }}>
+                    <div className="flex justify-between items-center text-xs font-semibold text-[#191c1e] gap-2">
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        <span className="material-symbols-outlined text-base shrink-0" style={{ color: item.group.color }}>
                           {item.group.icon}
                         </span>
-                        <span className="font-bold text-[#191c1e] text-sm">{item.category}</span>
+                        <span className="font-bold text-[#191c1e] text-sm truncate">{item.category}</span>
                       </span>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 shrink-0">
                         <span className="font-dohyeon text-sm text-[#00236f]">
-                          {item.amount.toLocaleString()}원 ({pct}%)
+                          {formatSummaryAmountKRW(item.amount)} ({pct}%)
                         </span>
                         <span className="material-symbols-outlined text-lg text-[#757682]">
                           {isExpanded ? 'expand_less' : 'expand_more'}
@@ -440,14 +435,16 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
                         ) : (
                           <div className="space-y-1.5">
                             {subCategoriesList.map((sub) => (
-                              <div key={sub.name} className="flex justify-between items-center text-xs">
-                                <span className="text-[#191c1e] font-medium flex items-center gap-1.5">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-[#00236f]" />
-                                  {sub.name}
+                              <div key={sub.name} className="flex justify-between items-center text-xs gap-2">
+                                <span className="text-[#191c1e] font-medium flex items-center gap-1.5 min-w-0">
+                                  <span className="material-symbols-outlined text-sm shrink-0" style={{ color: item.group.color }}>
+                                    {getSubCategoryIcon(sub.name, item.category)}
+                                  </span>
+                                  <span className="truncate">{sub.name}</span>
                                 </span>
-                                <div className="text-right flex items-center gap-2">
+                                <div className="text-right flex items-center gap-2 shrink-0">
                                   <span className="font-semibold text-[#191c1e]">
-                                    {sub.amount.toLocaleString()}원
+                                    {formatSummaryAmountKRW(sub.amount)}
                                   </span>
                                   <span className="text-[10px] font-bold text-[#00236f] bg-[#dce1ff] px-1.5 py-0.2 rounded">
                                     {sub.percentage}%
@@ -469,15 +466,15 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
                         ) : (
                           <div className="space-y-1.5">
                             {top3Merchants.map((m, idx) => (
-                              <div key={m.merchant} className="flex justify-between items-center text-xs">
-                                <span className="text-[#191c1e] font-medium flex items-center gap-1.5 truncate max-w-[65%]">
+                              <div key={m.merchant} className="flex justify-between items-center text-xs gap-2">
+                                <span className="text-[#191c1e] font-medium flex items-center gap-1.5 truncate max-w-[65%] min-w-0">
                                   <span className="w-4 h-4 rounded-full bg-[#00236f]/10 text-[#00236f] text-[10px] font-bold flex items-center justify-center shrink-0">
                                     {idx + 1}
                                   </span>
                                   <span className="truncate">{m.merchant}</span>
                                 </span>
-                                <span className="font-semibold text-[#00236f] text-xs">
-                                  {m.amount.toLocaleString()}원
+                                <span className="font-semibold text-[#00236f] text-xs shrink-0">
+                                  {formatSummaryAmountKRW(m.amount)}
                                 </span>
                               </div>
                             ))}
@@ -532,7 +529,12 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
           <>
             <div className="grid grid-cols-2 gap-2.5 text-xs">
               <div className="bg-[#f8fafd] p-3 rounded-xl border border-[#c5c5d3]/20 space-y-1">
-                <span className="text-[11px] text-[#757682] block font-medium">지난달 대비 증감</span>
+                <span className="text-[11px] text-[#757682] flex items-center gap-1 font-medium">
+                  <span className="material-symbols-outlined text-xs text-[#00236f] shrink-0">
+                    {insights.prevComparison.isIncreased ? 'trending_up' : 'trending_down'}
+                  </span>
+                  지난달 대비 증감
+                </span>
                 <div className="font-dohyeon text-sm text-[#191c1e] flex items-center gap-1">
                   <span className={insights.prevComparison.isIncreased ? 'text-[#ba1a1a]' : 'text-[#006c49]'}>
                     {insights.prevComparison.isIncreased ? '▲' : '▼'} {insights.prevComparison.diffPercent}%
@@ -540,52 +542,67 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
                 </div>
                 <span className="text-[10px] text-[#757682] block">
                   {insights.prevComparison.diffAmount >= 0 ? '+' : ''}
-                  {insights.prevComparison.diffAmount.toLocaleString()}원
+                  {formatSummaryAmountKRW(insights.prevComparison.diffAmount)}
                 </span>
               </div>
 
               <div className="bg-[#f8fafd] p-3 rounded-xl border border-[#c5c5d3]/20 space-y-1">
-                <span className="text-[11px] text-[#757682] block font-medium">최대 지출 카테고리</span>
+                <span className="text-[11px] text-[#757682] flex items-center gap-1 font-medium">
+                  <span className="material-symbols-outlined text-xs text-[#d97706] shrink-0">workspace_premium</span>
+                  최대 지출 카테고리
+                </span>
                 <div className="font-dohyeon text-sm text-[#00236f] truncate">
                   {insights.topCategory ? insights.topCategory.category : '-'}
                 </div>
                 <span className="text-[10px] text-[#757682] block">
-                  {insights.topCategory ? `${insights.topCategory.amount.toLocaleString()}원` : '내역 없음'}
+                  {insights.topCategory ? formatSummaryAmountKRW(insights.topCategory.amount) : '내역 없음'}
                 </span>
               </div>
 
               <div className="bg-[#f8fafd] p-3 rounded-xl border border-[#c5c5d3]/20 space-y-1">
-                <span className="text-[11px] text-[#757682] block font-medium">최대 증가 카테고리</span>
+                <span className="text-[11px] text-[#757682] flex items-center gap-1 font-medium">
+                  <span className="material-symbols-outlined text-xs text-[#ba1a1a] shrink-0">local_fire_department</span>
+                  최대 증가 카테고리
+                </span>
                 <div className="font-dohyeon text-sm text-[#ba1a1a] truncate">
                   {insights.mostIncreasedCategory ? insights.mostIncreasedCategory.category : '-'}
                 </div>
                 <span className="text-[10px] text-[#757682] block">
                   {insights.mostIncreasedCategory
-                    ? `+${insights.mostIncreasedCategory.increaseAmount.toLocaleString()}원`
+                    ? `+${formatSummaryAmountKRW(insights.mostIncreasedCategory.increaseAmount)}`
                     : '증가 내역 없음'}
                 </span>
               </div>
 
               <div className="bg-[#f8fafd] p-3 rounded-xl border border-[#c5c5d3]/20 space-y-1">
-                <span className="text-[11px] text-[#757682] block font-medium">하루 평균 소비</span>
+                <span className="text-[11px] text-[#757682] flex items-center gap-1 font-medium">
+                  <span className="material-symbols-outlined text-xs text-[#00236f] shrink-0">calendar_today</span>
+                  하루 평균 소비
+                </span>
                 <div className="font-dohyeon text-sm text-[#00236f]">
-                  {insights.dailyAverage.toLocaleString()}원
+                  {formatSummaryAmountKRW(insights.dailyAverage)}
                 </div>
                 <span className="text-[10px] text-[#757682] block">월 30일 기준</span>
               </div>
 
               <div className="bg-[#f8fafd] p-3 rounded-xl border border-[#c5c5d3]/20 space-y-1">
-                <span className="text-[11px] text-[#757682] block font-medium">외식 횟수 & 금액</span>
+                <span className="text-[11px] text-[#757682] flex items-center gap-1 font-medium">
+                  <span className="material-symbols-outlined text-xs text-[#ea580c] shrink-0">restaurant_menu</span>
+                  외식 횟수 & 금액
+                </span>
                 <div className="font-dohyeon text-sm text-[#191c1e]">
-                  {insights.diningOut.count}회 · {insights.diningOut.amount.toLocaleString()}원
+                  {insights.diningOut.count}회 · {formatSummaryAmountKRW(insights.diningOut.amount)}
                 </div>
                 <span className="text-[10px] text-[#757682] block">식비 소분류</span>
               </div>
 
               <div className="bg-[#f8fafd] p-3 rounded-xl border border-[#c5c5d3]/20 space-y-1">
-                <span className="text-[11px] text-[#757682] block font-medium">장보기 횟수 & 금액</span>
+                <span className="text-[11px] text-[#757682] flex items-center gap-1 font-medium">
+                  <span className="material-symbols-outlined text-xs text-[#d97706] shrink-0">shopping_cart</span>
+                  장보기 횟수 & 금액
+                </span>
                 <div className="font-dohyeon text-sm text-[#191c1e]">
-                  {insights.grocery.count}회 · {insights.grocery.amount.toLocaleString()}원
+                  {insights.grocery.count}회 · {formatSummaryAmountKRW(insights.grocery.amount)}
                 </div>
                 <span className="text-[10px] text-[#757682] block">식비 소분류</span>
               </div>
@@ -593,46 +610,61 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
               {showAllInsights && (
                 <>
                   <div className="bg-[#f8fafd] p-3 rounded-xl border border-[#c5c5d3]/20 space-y-1 animate-fadeIn">
-                    <span className="text-[11px] text-[#757682] block font-medium">편의점 이용</span>
+                    <span className="text-[11px] text-[#757682] flex items-center gap-1 font-medium">
+                      <span className="material-symbols-outlined text-xs text-[#00236f] shrink-0">local_convenience_store</span>
+                      편의점 이용
+                    </span>
                     <div className="font-dohyeon text-sm text-[#191c1e]">
-                      {insights.convenience.count}회 · {insights.convenience.amount.toLocaleString()}원
+                      {insights.convenience.count}회 · {formatSummaryAmountKRW(insights.convenience.amount)}
                     </div>
                     <span className="text-[10px] text-[#757682] block">소비 건수</span>
                   </div>
 
                   <div className="bg-[#f8fafd] p-3 rounded-xl border border-[#c5c5d3]/20 space-y-1 animate-fadeIn">
-                    <span className="text-[11px] text-[#757682] block font-medium">교육비 합계</span>
+                    <span className="text-[11px] text-[#757682] flex items-center gap-1 font-medium">
+                      <span className="material-symbols-outlined text-xs text-[#7c3aed] shrink-0">school</span>
+                      교육비 합계
+                    </span>
                     <div className="font-dohyeon text-sm text-[#00236f]">
-                      {insights.education.amount.toLocaleString()}원
+                      {formatSummaryAmountKRW(insights.education.amount)}
                     </div>
                     <span className="text-[10px] text-[#757682] block">가족 소분류</span>
                   </div>
 
                   <div className="bg-[#f8fafd] p-3 rounded-xl border border-[#c5c5d3]/20 space-y-1 animate-fadeIn">
-                    <span className="text-[11px] text-[#757682] block font-medium">보험료 합계</span>
+                    <span className="text-[11px] text-[#757682] flex items-center gap-1 font-medium">
+                      <span className="material-symbols-outlined text-xs text-[#059669] shrink-0">shield</span>
+                      보험료 합계
+                    </span>
                     <div className="font-dohyeon text-sm text-[#006c49]">
-                      {insights.insurance.amount.toLocaleString()}원
+                      {formatSummaryAmountKRW(insights.insurance.amount)}
                     </div>
                     <span className="text-[10px] text-[#757682] block">보험 카테고리</span>
                   </div>
 
                   <div className="bg-[#f8fafd] p-3 rounded-xl border border-[#c5c5d3]/20 space-y-1 animate-fadeIn">
-                    <span className="text-[11px] text-[#757682] block font-medium">최다 방문 거래처</span>
+                    <span className="text-[11px] text-[#757682] flex items-center gap-1 font-medium">
+                      <span className="material-symbols-outlined text-xs text-[#00236f] shrink-0">storefront</span>
+                      최다 방문 거래처
+                    </span>
                     <div className="font-dohyeon text-sm text-[#191c1e] truncate">
                       {insights.topMerchant ? insights.topMerchant.merchant : '-'}
                     </div>
                     <span className="text-[10px] text-[#757682] block">
                       {insights.topMerchant
-                        ? `${insights.topMerchant.count}회 · ${insights.topMerchant.amount.toLocaleString()}원`
+                        ? `${insights.topMerchant.count}회 · ${formatSummaryAmountKRW(insights.topMerchant.amount)}`
                         : '내역 없음'}
                     </span>
                   </div>
 
                   <div className="col-span-2 bg-[#f8fafd] p-3 rounded-xl border border-[#c5c5d3]/20 space-y-1 animate-fadeIn">
-                    <span className="text-[11px] text-[#757682] block font-medium">가장 큰 단일 소비</span>
-                    <div className="font-dohyeon text-sm text-[#ba1a1a] flex justify-between items-center">
+                    <span className="text-[11px] text-[#757682] flex items-center gap-1 font-medium">
+                      <span className="material-symbols-outlined text-xs text-[#ba1a1a] shrink-0">credit_card</span>
+                      가장 큰 단일 소비
+                    </span>
+                    <div className="font-dohyeon text-sm text-[#ba1a1a] flex justify-between items-center gap-2">
                       <span className="truncate">{insights.largestSingleTransaction ? insights.largestSingleTransaction.merchant : '-'}</span>
-                      <span>{insights.largestSingleTransaction ? `${insights.largestSingleTransaction.amount.toLocaleString()}원` : '-'}</span>
+                      <span className="shrink-0">{insights.largestSingleTransaction ? formatSummaryAmountKRW(insights.largestSingleTransaction.amount) : '-'}</span>
                     </div>
                     <span className="text-[10px] text-[#757682] block">
                       {insights.largestSingleTransaction ? insights.largestSingleTransaction.category : ''}
@@ -657,14 +689,14 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
       </section>
 
       {/* 6. AI CFO 한줄 코멘트 (AI CFO One-Line Comment Card) */}
-      <section className="bg-gradient-to-r from-[#00236f]/5 to-[#6ffbbe]/10 p-4.5 rounded-2xl border border-[#00236f]/20 shadow-xs space-y-2">
+      <section className="bg-gradient-to-r from-[#00236f]/5 to-[#6ffbbe]/10 p-4 rounded-2xl border border-[#00236f]/20 shadow-xs space-y-2">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-[#00236f] text-[#6ffbbe] flex items-center justify-center shrink-0">
-            <span className="material-symbols-outlined text-base">smart_toy</span>
+          <div className="w-6 h-6 rounded-lg bg-[#00236f] text-[#6ffbbe] flex items-center justify-center shrink-0">
+            <span className="material-symbols-outlined text-sm">smart_toy</span>
           </div>
           <span className="font-dohyeon text-sm text-[#00236f]">AI CFO 한줄 코멘트</span>
         </div>
-        <p className="text-xs text-[#191c1e] font-medium leading-relaxed pl-9">
+        <p className="text-xs text-[#191c1e] font-medium leading-relaxed pl-8">
           {cfoComment}
         </p>
       </section>

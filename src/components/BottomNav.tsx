@@ -18,7 +18,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentScreen, onNavigate 
     { id: 'home', defaultScreen: '1-0', label: '홈', icon: 'home' },
     { id: 'ledger', defaultScreen: '2-0', label: '가계부', icon: 'account_balance_wallet' },
     { id: 'assets', defaultScreen: '3-0', label: '자산', icon: 'payments' },
-    { id: 'planner', defaultScreen: '4-0', label: '플래너', icon: 'calendar_month' },
+    { id: 'planner', defaultScreen: '4-1', label: '플래너', icon: 'calendar_month' },
   ];
 
   return (

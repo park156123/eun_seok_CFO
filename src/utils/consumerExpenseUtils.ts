@@ -1,5 +1,6 @@
 import { Transaction } from '../types';
 import { parseCategoryString, getCategoryGroup, ConsumerCategoryGroup } from '../data/consumerCategories';
+import { formatSummaryAmountKRW } from './amountUtils';
 
 /**
  * Unified Common Consumer Transaction Filter.
@@ -411,9 +412,9 @@ export function generateCfoComment(
 
   if (insights.diningOut.amount > 0 && insights.grocery.amount > 0) {
     if (insights.diningOut.amount > insights.grocery.amount) {
-      parts.push(`장보기(${insights.grocery.amount.toLocaleString()}원)보다 외식비(${insights.diningOut.amount.toLocaleString()}원) 지출이 많았습니다.`);
+      parts.push(`장보기(${formatSummaryAmountKRW(insights.grocery.amount)})보다 외식비(${formatSummaryAmountKRW(insights.diningOut.amount)}) 지출이 많았습니다.`);
     } else {
-      parts.push(`외식비(${insights.diningOut.amount.toLocaleString()}원)보다 장보기(${insights.grocery.amount.toLocaleString()}원) 지출을 효율적으로 관리하고 계십니다.`);
+      parts.push(`외식비(${formatSummaryAmountKRW(insights.diningOut.amount)})보다 장보기(${formatSummaryAmountKRW(insights.grocery.amount)}) 지출을 효율적으로 관리하고 계십니다.`);
     }
   } else if (insights.prevComparison.diffAmount !== 0) {
     if (insights.prevComparison.isIncreased) {

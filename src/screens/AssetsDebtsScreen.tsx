@@ -6,6 +6,8 @@ import { useSelectedMonth } from '../context/SelectedMonthContext';
 import { OpeningSnapshotModal } from '../components/OpeningSnapshotModal';
 import { MonthSelector } from '../components/MonthSelector';
 import { calculateMonthlyInterest } from '../utils/financialCostCalculator';
+import { formatAssetAmountKRW } from '../utils/amountUtils';
+import { getAssetTypeIcon, getDebtTypeIcon } from '../utils/assetTheme';
 
 interface AssetsDebtsScreenProps {
   onNavigate: (screen: ScreenId) => void;
@@ -112,18 +114,7 @@ export const AssetsDebtsScreen: React.FC<AssetsDebtsScreenProps> = ({
   const netWorth = totalAsset - totalDebt;
   const debtRatio = totalAsset > 0 ? ((totalDebt / totalAsset) * 100).toFixed(1) : '0.0';
 
-  const formatKRW = (num: number) => {
-    if (Math.abs(num) >= 100000000) {
-      const eok = Math.floor(Math.abs(num) / 100000000);
-      const man = Math.round((Math.abs(num) % 100000000) / 10000);
-      const prefix = num < 0 ? '-' : '';
-      return man > 0 ? `${prefix}${eok}억 ${man.toLocaleString()}만원` : `${prefix}${eok}억원`;
-    }
-    if (Math.abs(num) >= 10000) {
-      return `${(num / 10000).toLocaleString()}만원`;
-    }
-    return `${num.toLocaleString()}원`;
-  };
+  const formatKRW = (num: number) => formatAssetAmountKRW(num);
 
   const isRealEstateCat = (cat?: string) => {
     if (!cat) return false;
@@ -219,43 +210,58 @@ export const AssetsDebtsScreen: React.FC<AssetsDebtsScreenProps> = ({
       ) : (
         <>
           {/* 1. Net Worth Summary Card */}
-          <section className="bg-[#f2f4f6] rounded-3xl p-5 shadow-[0_4px_12px_rgba(0,35,111,0.05)] border border-white/60 space-y-4">
+          <section className="bg-gradient-to-br from-[#00236f] via-[#00236f] to-[#1e3a8a] rounded-3xl p-6 shadow-xl text-white space-y-4">
             <div className="flex justify-between items-start">
-              <div>
-                <span className="font-label-md text-xs text-[#757682] mb-1 block">
-                  {formattedSelectedMonth} 확정 순자산
-                </span>
-                <h2 className="font-dohyeon text-2xl text-[#00236f] font-bold">
-                  {formatKRW(netWorth)}
-                </h2>
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-[#6cf8bb]/20 flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-[#6cf8bb] text-2xl">diamond</span>
+                </div>
+                <div>
+                  <span className="font-label-md text-xs text-white/80 block">
+                    {formattedSelectedMonth} 확정 순자산
+                  </span>
+                  <h2 className="font-dohyeon text-3xl sm:text-4xl text-[#6cf8bb] font-bold tracking-tight mt-0.5">
+                    {formatKRW(netWorth)}
+                  </h2>
+                </div>
               </div>
-              <div className="bg-[#6cf8bb] text-[#00714d] px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 shadow-xs">
+              <div className="bg-[#6cf8bb]/20 border border-[#6cf8bb]/30 text-[#6cf8bb] px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 shrink-0">
                 <span className="material-symbols-outlined text-sm">verified_user</span>
-                스냅샷 확정
+                확정
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 pt-3 border-t border-[#c5c5d3]/30">
-              <div>
-                <span className="font-label-md text-xs text-[#757682] block">총자산</span>
-                <p className="font-body-md text-sm font-bold text-[#191c1e]">{formatKRW(totalAsset)}</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-4 border-t border-white/15 text-xs">
+              <div className="bg-white/10 p-3 rounded-2xl flex flex-col justify-between">
+                <div className="flex items-center gap-1.5 text-white/80 mb-1">
+                  <span className="material-symbols-outlined text-sm text-[#6cf8bb]">home</span>
+                  <span>부동산</span>
+                </div>
+                <p className="font-dohyeon text-sm text-white text-right">{formatKRW(realEstateTotal)}</p>
               </div>
-              <div>
-                <span className="font-label-md text-xs text-[#757682] block text-right">총부채</span>
-                <p className="font-body-md text-sm font-bold text-[#ba1a1a] text-right">{formatKRW(totalDebt)}</p>
-              </div>
-            </div>
 
-            <div className="flex justify-between items-center pt-3 border-t border-[#c5c5d3]/30 text-xs">
-              <div className="flex items-center gap-1">
-                <span className="material-symbols-outlined text-[#757682] text-sm">percent</span>
-                <span className="text-[#757682]">부채비율</span>
-                <span className="font-bold text-[#191c1e]">{debtRatio}%</span>
+              <div className="bg-white/10 p-3 rounded-2xl flex flex-col justify-between">
+                <div className="flex items-center gap-1.5 text-white/80 mb-1">
+                  <span className="material-symbols-outlined text-sm text-[#6cf8bb]">account_balance_wallet</span>
+                  <span>금융자산</span>
+                </div>
+                <p className="font-dohyeon text-sm text-white text-right">{formatKRW(financialTotal)}</p>
               </div>
-              <div className="flex items-center gap-1">
-                <span className="material-symbols-outlined text-[#757682] text-sm">payments</span>
-                <span className="text-[#757682]">금융자산</span>
-                <span className="font-bold text-[#191c1e]">{formatKRW(financialTotal)}</span>
+
+              <div className="bg-white/10 p-3 rounded-2xl flex flex-col justify-between">
+                <div className="flex items-center gap-1.5 text-white/80 mb-1">
+                  <span className="material-symbols-outlined text-sm text-[#ff9999]">account_balance</span>
+                  <span>부채</span>
+                </div>
+                <p className="font-dohyeon text-sm text-[#ff9999] text-right">{formatKRW(totalDebt)}</p>
+              </div>
+
+              <div className="bg-white/10 p-3 rounded-2xl flex flex-col justify-between">
+                <div className="flex items-center gap-1.5 text-white/80 mb-1">
+                  <span className="material-symbols-outlined text-sm text-white/80">percent</span>
+                  <span>부채비율</span>
+                </div>
+                <p className="font-dohyeon text-sm text-white text-right">{debtRatio}%</p>
               </div>
             </div>
           </section>
@@ -351,51 +357,57 @@ export const AssetsDebtsScreen: React.FC<AssetsDebtsScreenProps> = ({
                   해당 조건의 자산이 없습니다.
                 </div>
               ) : (
-                filteredAssets.map((asset) => (
-                  <div
-                    key={asset.id}
-                    className="bg-white rounded-2xl p-4 shadow-xs border border-[#c5c5d3]/20 space-y-3"
-                  >
+                filteredAssets.map((asset) => {
+                  const assetIcon = getAssetTypeIcon(asset.assetType, asset.assetName);
+                  return (
                     <div
-                      onClick={() =>
-                        setExpandedAssetId(expandedAssetId === asset.id ? null : asset.id)
-                      }
-                      className="flex justify-between items-start cursor-pointer"
+                      key={asset.id}
+                      className="bg-white rounded-2xl p-4 shadow-xs border border-[#c5c5d3]/20 space-y-3 hover:border-[#00236f]/30 transition-all"
                     >
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <h4 className="font-body-lg text-base font-bold text-[#191c1e]">
-                            [{asset.assetName}]
-                          </h4>
+                      <div
+                        onClick={() =>
+                          setExpandedAssetId(expandedAssetId === asset.id ? null : asset.id)
+                        }
+                        className="flex justify-between items-center cursor-pointer gap-2"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-10 h-10 rounded-xl bg-[#006c49]/10 text-[#006c49] flex items-center justify-center shrink-0">
+                            <span className="material-symbols-outlined text-xl">{assetIcon}</span>
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="font-body-lg text-sm font-bold text-[#191c1e] truncate">
+                              {asset.assetName}
+                            </h4>
+                            <span className="text-[11px] text-[#006c49] font-bold bg-[#6cf8bb]/30 px-2 py-0.5 rounded mt-0.5 inline-block">
+                              {asset.assetType}
+                            </span>
+                          </div>
                         </div>
-                        <span className="text-[11px] text-[#006c49] font-bold bg-[#6cf8bb]/30 px-2 py-0.5 rounded mt-1 inline-block">
-                          {asset.assetType}
-                        </span>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-bold text-base text-[#00236f]">
-                          {formatKRW(asset.currentValue)}
-                        </p>
-                        {asset.memo && <p className="text-xs text-[#757682]">{asset.memo}</p>}
-                      </div>
-                    </div>
-
-                    {expandedAssetId === asset.id && (
-                      <div className="pt-2 border-t border-[#c5c5d3]/20 space-y-2 text-xs">
-                        <div className="flex justify-between">
-                          <span className="text-[#757682]">자산 유형</span>
-                          <span className="font-bold text-[#191c1e]">{asset.assetType}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-[#757682]">스냅샷 평가 금액</span>
-                          <span className="font-bold text-[#00236f]">
+                        <div className="text-right shrink-0">
+                          <p className="font-dohyeon text-base text-[#00236f]">
                             {formatKRW(asset.currentValue)}
-                          </span>
+                          </p>
+                          {asset.memo && <p className="text-xs text-[#757682] truncate max-w-[140px]">{asset.memo}</p>}
                         </div>
                       </div>
-                    )}
-                  </div>
-                ))
+
+                      {expandedAssetId === asset.id && (
+                        <div className="pt-2 border-t border-[#c5c5d3]/20 space-y-2 text-xs">
+                          <div className="flex justify-between">
+                            <span className="text-[#757682]">자산 유형</span>
+                            <span className="font-bold text-[#191c1e]">{asset.assetType}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[#757682]">스냅샷 평가 금액</span>
+                            <span className="font-dohyeon text-[#00236f]">
+                              {formatKRW(asset.currentValue)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
               )}
             </section>
           )}
@@ -415,78 +427,84 @@ export const AssetsDebtsScreen: React.FC<AssetsDebtsScreenProps> = ({
                   해당 조건의 부채가 없습니다.
                 </div>
               ) : (
-                filteredDebts.map((debt) => (
-                  <div
-                    key={debt.id}
-                    className="bg-white rounded-2xl p-4 shadow-xs border border-[#c5c5d3]/20 space-y-3"
-                  >
+                filteredDebts.map((debt) => {
+                  const debtIcon = getDebtTypeIcon(debt.debtType, debt.lender, debt.debtName);
+                  return (
                     <div
-                      onClick={() =>
-                        setExpandedDebtId(expandedDebtId === debt.id ? null : debt.id)
-                      }
-                      className="flex justify-between items-start cursor-pointer"
+                      key={debt.id}
+                      className="bg-white rounded-2xl p-4 shadow-xs border border-[#c5c5d3]/20 space-y-3 hover:border-[#ba1a1a]/30 transition-all"
                     >
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <h4 className="font-body-lg text-base font-bold text-[#191c1e]">
-                            [{debt.debtName}]
-                          </h4>
+                      <div
+                        onClick={() =>
+                          setExpandedDebtId(expandedDebtId === debt.id ? null : debt.id)
+                        }
+                        className="flex justify-between items-center cursor-pointer gap-2"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-10 h-10 rounded-xl bg-[#ba1a1a]/10 text-[#ba1a1a] flex items-center justify-center shrink-0">
+                            <span className="material-symbols-outlined text-xl">{debtIcon}</span>
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="font-body-lg text-sm font-bold text-[#191c1e] truncate">
+                              {debt.debtName}
+                            </h4>
+                            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              <span className="text-[11px] text-[#ba1a1a] font-bold bg-[#ffdad6]/50 px-2 py-0.5 rounded">
+                                {debt.debtType}
+                              </span>
+                              <span className="text-xs text-[#757682] font-medium truncate">{debt.lender}</span>
+                            </div>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[11px] text-[#ba1a1a] font-bold bg-[#ffdad6]/50 px-2 py-0.5 rounded">
-                            {debt.debtType}
-                          </span>
-                          <span className="text-xs text-[#757682] font-medium">{debt.lender}</span>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-bold text-base text-[#ba1a1a]">
-                          {formatKRW(debt.currentBalance)}
-                        </p>
-                        <p className="text-xs text-[#757682]">월 예상 상환: {formatKRW(debt.monthlyPayment)}</p>
-                      </div>
-                    </div>
-
-                    {expandedDebtId === debt.id && (
-                      <div className="pt-2 border-t border-[#c5c5d3]/20 space-y-2 text-xs">
-                        <div className="flex justify-between">
-                          <span className="text-[#757682]">채권자 / 금융기관</span>
-                          <span className="font-bold text-[#191c1e]">{debt.lender}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-[#757682]">상환방식 / 금리</span>
-                          <span className="font-bold text-[#191c1e]">
-                            {debt.repaymentMethod} {debt.hasRate ? `(${debt.interestRate}%)` : ''}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-[#757682]">시작 원금잔액</span>
-                          <span className="font-bold text-[#ba1a1a]">
+                        <div className="text-right shrink-0">
+                          <p className="font-dohyeon text-base text-[#ba1a1a]">
                             {formatKRW(debt.currentBalance)}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-[#757682]">예정 원금</span>
-                          <span className="font-bold text-[#00236f]">
-                            {formatKRW(debt.scheduledPrincipal)}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-[#757682]">예상 이자</span>
-                          <span className="font-bold text-[#ba1a1a]">
-                            {debt.hasRate ? formatKRW(debt.estimatedInterest) : '금리 미등록'}
-                          </span>
-                        </div>
-                        <div className="flex justify-between pt-1 border-t border-gray-100 font-bold">
-                          <span className="text-[#191c1e]">월 예상 상환액 (원금+이자)</span>
-                          <span className="text-[#ba1a1a]">
-                            {formatKRW(debt.monthlyPayment)}
-                          </span>
+                          </p>
+                          <p className="text-xs text-[#757682]">월 예상 상환: {formatKRW(debt.monthlyPayment)}</p>
                         </div>
                       </div>
-                    )}
-                  </div>
-                ))
+
+                      {expandedDebtId === debt.id && (
+                        <div className="pt-2 border-t border-[#c5c5d3]/20 space-y-2 text-xs">
+                          <div className="flex justify-between">
+                            <span className="text-[#757682]">채권자 / 금융기관</span>
+                            <span className="font-bold text-[#191c1e]">{debt.lender}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[#757682]">상환방식 / 금리</span>
+                            <span className="font-bold text-[#191c1e]">
+                              {debt.repaymentMethod} {debt.hasRate ? `(${debt.interestRate}%)` : ''}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[#757682]">시작 원금잔액</span>
+                            <span className="font-dohyeon text-[#ba1a1a]">
+                              {formatKRW(debt.currentBalance)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[#757682]">예정 원금</span>
+                            <span className="font-dohyeon text-[#00236f]">
+                              {formatKRW(debt.scheduledPrincipal)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[#757682]">예상 이자</span>
+                            <span className="font-dohyeon text-[#ba1a1a]">
+                              {debt.hasRate ? formatKRW(debt.estimatedInterest) : '금리 미등록'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between pt-1 border-t border-gray-100 font-bold">
+                            <span className="text-[#191c1e]">월 예상 상환액 (원금+이자)</span>
+                            <span className="font-dohyeon text-[#ba1a1a]">
+                              {formatKRW(debt.monthlyPayment)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
               )}
             </section>
           )}

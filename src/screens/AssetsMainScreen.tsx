@@ -6,6 +6,7 @@ import { useSelectedMonth } from '../context/SelectedMonthContext';
 import { MonthSelector } from '../components/MonthSelector';
 import { getMonthlyRecordForMonth } from '../utils/monthDataSelectors';
 import { OpeningSnapshotModal } from '../components/OpeningSnapshotModal';
+import { formatAssetAmountKRW } from '../utils/amountUtils';
 
 interface AssetsMainScreenProps {
   onNavigate: (screen: ScreenId) => void;
@@ -110,64 +111,63 @@ export const AssetsMainScreen: React.FC<AssetsMainScreenProps> = ({
             <div
               id="assets-hero-card"
               onClick={() => onNavigate('3-1')}
-              className="bg-gradient-to-br from-[#00236f] to-[#1e3a8a] p-6 rounded-2xl shadow-xl text-white cursor-pointer active:scale-[0.98] transition-transform"
+              className="bg-gradient-to-br from-[#00236f] via-[#00236f] to-[#1e3a8a] p-6 rounded-2xl shadow-xl text-white cursor-pointer active:scale-[0.98] transition-transform relative overflow-hidden"
             >
-              <div className="flex items-center gap-1.5 mb-1 opacity-90">
-                <span className="font-label-md text-xs">{formattedSelectedMonth} 순자산</span>
-                <span
-                  className="material-symbols-outlined text-sm text-[#6ffbbe]"
-                  style={{ fontVariationSettings: "'FILL' 1" }}
-                >
-                  verified_user
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-[#6cf8bb]/20 flex items-center justify-center shrink-0">
+                    <span className="material-symbols-outlined text-[#6cf8bb] text-lg">
+                      diamond
+                    </span>
+                  </div>
+                  <span className="font-dohyeon text-base text-white/90">순자산</span>
+                </div>
+                <span className="text-[11px] text-[#6cf8bb] font-bold bg-[#6cf8bb]/15 px-2.5 py-1 rounded-full border border-[#6cf8bb]/30 shrink-0">
+                  {formattedSelectedMonth} 확정
                 </span>
               </div>
 
-              <h2 className="font-dohyeon text-2xl mb-4 tracking-tight">
-                {displayNetWorth.toLocaleString()}원
-              </h2>
-
-              <div className="inline-flex items-center gap-1.5 bg-[#6cf8bb]/20 backdrop-blur-xs px-3 py-1 rounded-full border border-[#6cf8bb]/30">
-                <span className="material-symbols-outlined text-[#6cf8bb] text-sm">
-                  auto_awesome
-                </span>
-                <p className="font-label-md text-xs text-[#6cf8bb]">
-                  {formattedSelectedMonth} 확정 자산·부채 잔액 기준
-                </p>
+              <div className="mt-3 text-right">
+                <h2 className="font-dohyeon text-3xl sm:text-4xl text-[#6cf8bb] tracking-tight drop-shadow-xs">
+                  {formatAssetAmountKRW(displayNetWorth)}
+                </h2>
               </div>
             </div>
           </section>
 
-          {/* Main Asset Grid (Bento Style) */}
-          <section className="grid grid-cols-2 gap-3">
+          {/* Main Asset Grid */}
+          <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {/* Real Estate */}
             <div
               id="asset-card-realestate"
               onClick={() => onNavigate('3-1')}
-              className="col-span-2 bg-white/80 backdrop-blur-md p-5 rounded-2xl shadow-xs border border-[#c5c5d3]/30 flex items-center justify-between cursor-pointer hover:border-[#00236f]/40 transition-all"
+              className="bg-white/90 backdrop-blur-md p-4.5 rounded-2xl shadow-xs border border-[#c5c5d3]/30 cursor-pointer hover:border-[#00236f]/40 transition-all flex flex-col justify-between"
             >
-              <div>
-                <p className="font-label-md text-xs text-[#444651] mb-1">부동산</p>
-                <p className="font-dohyeon text-xl text-[#00236f]">
-                  {displayRE.toLocaleString()}원
-                </p>
+              <div className="flex items-center justify-between mb-3">
+                <span className="font-bold text-xs text-[#444651]">부동산</span>
+                <div className="w-9 h-9 rounded-xl bg-[#00236f]/10 text-[#00236f] flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-lg">home</span>
+                </div>
               </div>
-              <div className="w-12 h-12 rounded-full bg-[#dce1ff] flex items-center justify-center shrink-0">
-                <span className="material-symbols-outlined text-[#00236f]">home_work</span>
-              </div>
+              <p className="font-dohyeon text-lg text-[#00236f] text-right truncate">
+                {formatAssetAmountKRW(displayRE)}
+              </p>
             </div>
 
             {/* Financial Assets */}
             <div
               id="asset-card-financial"
               onClick={() => onNavigate('3-1')}
-              className="bg-white/80 backdrop-blur-md p-5 rounded-2xl shadow-xs border border-[#c5c5d3]/30 cursor-pointer hover:border-[#00236f]/40 transition-all"
+              className="bg-white/90 backdrop-blur-md p-4.5 rounded-2xl shadow-xs border border-[#c5c5d3]/30 cursor-pointer hover:border-[#00236f]/40 transition-all flex flex-col justify-between"
             >
-              <div className="w-10 h-10 rounded-full bg-[#6cf8bb]/30 flex items-center justify-center mb-3">
-                <span className="material-symbols-outlined text-[#006c49]">payments</span>
+              <div className="flex items-center justify-between mb-3">
+                <span className="font-bold text-xs text-[#444651]">금융자산</span>
+                <div className="w-9 h-9 rounded-xl bg-[#006c49]/10 text-[#006c49] flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-lg">account_balance_wallet</span>
+                </div>
               </div>
-              <p className="font-label-md text-xs text-[#444651] mb-0.5">금융자산</p>
-              <p className="font-body-lg text-sm font-bold text-[#191c1e]">
-                {displayFin.toLocaleString()}원
+              <p className="font-dohyeon text-lg text-[#006c49] text-right truncate">
+                {formatAssetAmountKRW(displayFin)}
               </p>
             </div>
 
@@ -175,14 +175,16 @@ export const AssetsMainScreen: React.FC<AssetsMainScreenProps> = ({
             <div
               id="asset-card-debts"
               onClick={() => onNavigate('3-1')}
-              className="bg-white/80 backdrop-blur-md p-5 rounded-2xl shadow-xs border border-[#c5c5d3]/30 cursor-pointer hover:border-[#00236f]/40 transition-all"
+              className="bg-white/90 backdrop-blur-md p-4.5 rounded-2xl shadow-xs border border-[#c5c5d3]/30 cursor-pointer hover:border-[#00236f]/40 transition-all flex flex-col justify-between"
             >
-              <div className="w-10 h-10 rounded-full bg-[#ffdad6] flex items-center justify-center mb-3">
-                <span className="material-symbols-outlined text-[#ba1a1a]">account_balance</span>
+              <div className="flex items-center justify-between mb-3">
+                <span className="font-bold text-xs text-[#444651]">부채</span>
+                <div className="w-9 h-9 rounded-xl bg-[#ba1a1a]/10 text-[#ba1a1a] flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-lg">account_balance</span>
+                </div>
               </div>
-              <p className="font-label-md text-xs text-[#444651] mb-0.5">부채</p>
-              <p className="font-body-lg text-sm font-bold text-[#191c1e]">
-                {displayTotalDebts.toLocaleString()}원
+              <p className="font-dohyeon text-lg text-[#ba1a1a] text-right truncate">
+                {formatAssetAmountKRW(displayTotalDebts)}
               </p>
             </div>
           </section>

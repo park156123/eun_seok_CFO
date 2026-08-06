@@ -5,6 +5,13 @@ import { useSelectedMonth } from '../context/SelectedMonthContext';
 import { MonthSelector } from '../components/MonthSelector';
 import { getMonthlySettlementSummary, getMonthlyRecordForMonth } from '../utils/monthDataSelectors';
 import { formatWonToManwon, formatKoreanAmountFromWon } from '../utils/amountUtils';
+import {
+  getEffectiveScheduleCategory,
+  getCategoryIcon,
+  formatPlannerAmount,
+  getScheduleDDayInfo,
+  getScheduleStatus,
+} from '../utils/scheduleUtils';
 
 // Helper: keyword-based icon mapping for major monthly changes (specialNotes)
 function getIconForNote(text: string): { icon: string; bgClass: string; textClass: string } {
@@ -63,44 +70,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         .slice(0, 3)
     : [];
 
-  // Retrieve existing AI CFO Report summary directly from saved record
-  const getSavedAiReportSummary = (): string | null => {
-    if (!currentRecord) return null;
-
-    const recAny = currentRecord as any;
-    if (recAny.aiSummary && typeof recAny.aiSummary === 'string' && recAny.aiSummary.trim() !== '') {
-      return recAny.aiSummary.trim();
-    }
-    if (recAny.aiReport?.summary && typeof recAny.aiReport.summary === 'string' && recAny.aiReport.summary.trim() !== '') {
-      return recAny.aiReport.summary.trim();
-    }
-    if (recAny.aiReport?.oneLine && typeof recAny.aiReport.oneLine === 'string' && recAny.aiReport.oneLine.trim() !== '') {
-      return recAny.aiReport.oneLine.trim();
-    }
-
-    // If report is completed/locked for this month, use the existing saved report's summary
-    if (currentRecord.status === '결산잠금' || currentRecord.status === '완료') {
-      return `${summary.formattedSelectedMonth || formattedSelectedMonth} 리포트: 총 수입과 지출 구조가 집계되었습니다.`;
-    }
-
-    return null;
-  };
-
-  const savedAiReportSummary = getSavedAiReportSummary();
-  const hasAiReport = Boolean(savedAiReportSummary);
-  const aiOneLineComment = savedAiReportSummary
-    ? (savedAiReportSummary.length > 60 ? savedAiReportSummary.slice(0, 57) + '...' : savedAiReportSummary)
-    : '';
-
-  // Calculate upcoming schedules from real planner schedule source (today onwards, max 3)
+  // Calculate upcoming schedules from real planner schedule source (in_progress & extended only, max 3, sorted by target date)
   const getUpcomingSchedules = () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
     return rawSchedules
+      .filter((sch) => {
+        const st = getScheduleStatus(sch);
+        return st !== 'completed' && !sch.completed;
+      })
       .map((sch) => {
         let schDate: Date | null = null;
-        let dDayStr = sch.dDay || '';
+        const effCategory = getEffectiveScheduleCategory(sch);
+        const icon = sch.categoryIcon || getCategoryIcon(effCategory);
+        const dDayInfo = getScheduleDDayInfo(sch);
+        const status = getScheduleStatus(sch);
 
         if (sch.date) {
           const cleanDateStr = sch.date.replace(/\./g, '-');
@@ -113,33 +95,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           }
         }
 
-        let diffDays = 0;
-        if (schDate) {
-          const timeDiff = schDate.getTime() - today.getTime();
-          diffDays = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
-          if (!dDayStr) {
-            if (diffDays === 0) dDayStr = 'D-Day';
-            else if (diffDays > 0) dDayStr = `D-${diffDays}`;
-            else dDayStr = `D+${Math.abs(diffDays)}`;
-          }
-        }
-
         const amountVal = sch.amount || sch.expectedPayment || 0;
-        const formattedAmount = amountVal > 0 ? formatKoreanAmountFromWon(amountVal) : '';
+        const formattedAmount = formatPlannerAmount(amountVal);
 
         return {
           ...sch,
+          effCategory,
+          icon,
           schDate,
-          diffDays,
-          dDayStr: dDayStr || 'D-Day',
+          dDayText: dDayInfo.text,
+          dDayBadgeClass: dDayInfo.badgeClass,
           formattedAmount,
+          status,
         };
-      })
-      .filter((sch) => {
-        if (sch.schDate) {
-          return sch.diffDays >= 0;
-        }
-        return true;
       })
       .sort((a, b) => {
         if (!a.schDate && !b.schDate) return 0;
@@ -361,41 +329,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         )}
       </section>
 
-      {/* 6. AI CFO 한 줄 코멘트 */}
-      <section className="bg-[#e6f4ed] p-4 sm:p-5 rounded-2xl border border-[#c3e9d5] shadow-xs space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-6.5 h-6.5 rounded-lg bg-[#006c49]/15 text-[#006c49] flex items-center justify-center shrink-0">
-              <span className="material-symbols-outlined text-lg" style={{ fontVariationSettings: "'FILL' 1" }}>
-                smart_toy
-              </span>
-            </div>
-            <h3 className="font-dohyeon text-sm sm:text-base text-[#004b32]">
-              AI CFO 한 줄 코멘트
-            </h3>
-          </div>
-          <button
-            type="button"
-            onClick={() => onNavigate('1-1')}
-            className="text-xs font-dohyeon text-[#006c49] hover:text-[#004b32] flex items-center gap-1 cursor-pointer hover:underline shrink-0"
-          >
-            AI 리포트 보기
-            <span className="material-symbols-outlined text-sm">arrow_forward</span>
-          </button>
-        </div>
-
-        {hasAiReport ? (
-          <p className="text-xs sm:text-sm text-[#003824] font-medium leading-relaxed bg-white/70 p-3.5 rounded-xl border border-[#006c49]/10">
-            &ldquo;{aiOneLineComment}&rdquo;
-          </p>
-        ) : (
-          <p className="text-xs sm:text-sm text-[#003824]/70 font-medium leading-relaxed bg-white/70 p-3.5 rounded-xl border border-[#006c49]/10">
-            아직 생성된 AI 리포트가 없습니다
-          </p>
-        )}
-      </section>
-
-      {/* 7. 오늘 기준 다가오는 일정 */}
+      {/* 6. 오늘 기준 다가오는 일정 */}
       <section className="bg-white p-5 rounded-2xl border border-[#c5c5d3]/30 shadow-[0_4px_16px_rgba(0,35,111,0.06)] space-y-3.5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -423,20 +357,29 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div className="w-9 h-9 rounded-lg bg-[#00236f]/10 text-[#00236f] flex items-center justify-center shrink-0">
                     <span className="material-symbols-outlined text-xl">
-                      {sch.categoryIcon || 'calendar_today'}
+                      {sch.icon}
                     </span>
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <h4 className="font-bold text-xs sm:text-sm text-[#191c1e] truncate">
                         {sch.title}
                       </h4>
-                      <span className="text-[10px] font-bold bg-[#ba1a1a] text-white px-1.5 py-0.5 rounded shrink-0">
-                        {sch.dDayStr}
+                      {sch.status === 'extended' ? (
+                        <span className="text-[10px] font-bold bg-orange-100 text-orange-800 border border-orange-200 px-1.5 py-0.5 rounded shrink-0">
+                          연장
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.5 rounded shrink-0">
+                          진행중
+                        </span>
+                      )}
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${sch.dDayBadgeClass}`}>
+                        {sch.dDayText}
                       </span>
                     </div>
                     <p className="text-xs text-[#757682] mt-0.5 font-medium">
-                      {sch.date}
+                      {sch.date} 예정
                     </p>
                   </div>
                 </div>

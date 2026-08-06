@@ -82,7 +82,102 @@ export function formatKoreanAmountFromMan(manInput: number | string | null | und
 }
 
 /**
+ * Formats a raw Won (원) value into 억·만원 unit string for Asset/Debt UI display.
+ * Rules:
+ * - Calculations stay strictly in exact Won numbers.
+ * - Displays in 억, 만원 units.
+ * - Under 10,000 Won displays exact Won (e.g., "5,000원", "0원").
+ *
+ * Examples:
+ *  4,050,000,000원 -> "40억 5,000만원"
+ *  2,529,020,160원 -> "25억 2,902만원"
+ *  1,520,979,840원 -> "15억 2,097만원"
+ *  66,000,000원    -> "6,600만원"
+ *  500,000원       -> "50만원"
+ *  0원             -> "0원"
+ */
+export function formatAssetAmountKRW(won: number | null | undefined): string {
+  if (won === null || won === undefined || isNaN(Number(won))) return '0원';
+  const numWon = Number(won);
+  if (numWon === 0) return '0원';
+
+  const isNegative = numWon < 0;
+  const absWon = Math.abs(numWon);
+  const prefix = isNegative ? '-' : '';
+
+  if (absWon < 10000) {
+    return `${prefix}${Math.floor(absWon).toLocaleString()}원`;
+  }
+
+  const manTotal = Math.floor(absWon / 10000);
+  const eok = Math.floor(manTotal / 10000);
+  const man = manTotal % 10000;
+
+  if (eok > 0) {
+    if (man > 0) {
+      return `${prefix}${eok}억 ${man.toLocaleString()}만원`;
+    }
+    return `${prefix}${eok}억원`;
+  }
+
+  return `${prefix}${man.toLocaleString()}만원`;
+}
+
+/**
+ * Formats a raw Won (원) value for summary display cards (truncated below 1,000 Won).
+ * Rules:
+ * - Storage & calculation stay in exact Won numbers.
+ * - Truncates amounts below 1,000 Won using Math.floor (no rounding).
+ * - Displays using Korean currency units (억, 만, 천원).
+ * - Amounts < 1,000 Won preserve exact Won string (e.g., "999원", "0원").
+ *
+ * Examples:
+ *  197,200원 -> "19만 7천원"
+ *  145,000원 -> "14만 5천원"
+ *  55,000원  -> "5만 5천원"
+ *  52,200원  -> "5만 2천원"
+ *  14,200원  -> "1만 4천원"
+ *  8,407원   -> "8천원"
+ *  3,900원   -> "3천원"
+ *  999원     -> "999원"
+ *  0원       -> "0원"
+ */
+export function formatSummaryAmountKRW(won: number | null | undefined): string {
+  if (won === null || won === undefined || isNaN(Number(won))) return '0원';
+  const numWon = Number(won);
+  if (numWon === 0) return '0원';
+
+  const isNegative = numWon < 0;
+  const absWon = Math.abs(numWon);
+  const prefix = isNegative ? '-' : '';
+
+  if (absWon < 1000) return `${prefix}${Math.floor(absWon).toLocaleString()}원`;
+
+  const truncated = Math.floor(absWon / 1000) * 1000;
+  const eok = Math.floor(truncated / 100000000);
+  const remainderAfterEok = truncated % 100000000;
+  const man = Math.floor(remainderAfterEok / 10000);
+  const cheon = Math.floor((remainderAfterEok % 10000) / 1000);
+
+  const parts: string[] = [];
+  if (eok > 0) {
+    parts.push(`${eok}억`);
+  }
+  if (man > 0) {
+    parts.push(`${man.toLocaleString()}만`);
+  }
+  if (cheon > 0) {
+    parts.push(`${cheon}천원`);
+  } else if (parts.length > 0) {
+    return `${prefix}${parts.join(' ')}원`;
+  }
+
+  return `${prefix}${parts.join(' ')}`;
+}
+
+/**
  * Formats a raw Won (원) value into 10,000-won (만원) rounded display string.
+
  * Uses Math.round for rounding to the nearest 만원.
  * Preserves negative and positive signs.
  * Examples:

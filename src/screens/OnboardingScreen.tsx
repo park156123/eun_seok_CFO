@@ -8,7 +8,6 @@ import {
   FixedExpenseItem,
   OnboardingAsset,
   OnboardingDebt,
-  OnboardingGoal,
   RepaymentPhase,
 } from '../types';
 import { normalizeIncomeSource, getDefaultModeForType } from '../utils/incomeUtils';
@@ -35,7 +34,6 @@ type OnboardingStep =
   | 'step2'
   | 'step3'
   | 'step4'
-  | 'step5'
   | 'complete';
 
 interface OnboardingScreenProps {
@@ -70,9 +68,6 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
   const [debts, setDebts] = useState<OnboardingDebt[]>(
     () => JSON.parse(JSON.stringify(GlobalMockDataStore.getData().debts.onboardingDebts || []))
   );
-  const [goals, setGoals] = useState<OnboardingGoal[]>(
-    () => JSON.parse(JSON.stringify(GlobalMockDataStore.getData().goals.onboardingGoals || []))
-  );
 
   // Reload fresh data from GlobalMockDataStore on component mount
   useEffect(() => {
@@ -83,12 +78,11 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
     setFixedExpenses(JSON.parse(JSON.stringify(storeData.fixedExpenses || [])));
     setAssets(JSON.parse(JSON.stringify(storeData.assets.onboardingAssets || [])));
     setDebts(JSON.parse(JSON.stringify(storeData.debts.onboardingDebts || [])));
-    setGoals(JSON.parse(JSON.stringify(storeData.goals.onboardingGoals || [])));
   }, []);
 
   // Active modal type for CRUD
   const [activeModal, setActiveModal] = useState<
-    'family' | 'income' | 'asset' | 'debt' | 'goal' | null
+    'family' | 'income' | 'asset' | 'debt' | null
   >(null);
 
   // Item being edited or viewed
@@ -214,21 +208,6 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
     repaymentPhases: [],
   });
 
-  // 5. Goal Form
-  const [goalForm, setGoalForm] = useState<{
-    goalName: string;
-    goalType: '부채상환' | '내집마련' | '비상금' | '투자' | '교육' | '은퇴' | '여행' | '기타';
-    targetAmount: string;
-    targetDate: string;
-    memo: string;
-  }>({
-    goalName: '',
-    goalType: '부채상환',
-    targetAmount: '',
-    targetDate: '2028-12-31',
-    memo: '',
-  });
-
   // Utility to calculate 만 나이 from birthDate
   const calculateAge = (birthDateStr: string): number => {
     if (!birthDateStr) return 0;
@@ -294,9 +273,6 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
         setCurrentStep('step4');
         break;
       case 'step4':
-        setCurrentStep('step5');
-        break;
-      case 'step5':
         setCurrentStep('complete');
         break;
       case 'complete':
@@ -306,7 +282,6 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
           incomeSources,
           onboardingAssets: assets,
           onboardingDebts: debts,
-          onboardingGoals: goals,
         });
         if (onFinishOnboarding) {
           onFinishOnboarding();
@@ -331,11 +306,8 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
       case 'step4':
         setCurrentStep('step3');
         break;
-      case 'step5':
-        setCurrentStep('step4');
-        break;
       case 'complete':
-        setCurrentStep('step5');
+        setCurrentStep('step4');
         break;
       default:
         onNavigate('1-0');
@@ -347,15 +319,13 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
   const getStepInfo = () => {
     switch (currentStep) {
       case 'step1':
-        return { num: 1, percent: 20, title: '기본정보' };
+        return { num: 1, percent: 25, title: '기본정보' };
       case 'step2':
-        return { num: 2, percent: 40, title: '수입원' };
+        return { num: 2, percent: 50, title: '수입원' };
       case 'step3':
-        return { num: 3, percent: 60, title: '자산' };
+        return { num: 3, percent: 75, title: '자산' };
       case 'step4':
-        return { num: 4, percent: 80, title: '부채' };
-      case 'step5':
-        return { num: 5, percent: 100, title: '목표' };
+        return { num: 4, percent: 100, title: '부채' };
       default:
         return null;
     }
@@ -517,29 +487,6 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
       });
     }
     setActiveModal('debt');
-  };
-
-  const openGoalModal = (item?: OnboardingGoal) => {
-    if (item) {
-      setEditingId(item.id);
-      setGoalForm({
-        goalName: item.goalName,
-        goalType: item.goalType,
-        targetAmount: item.targetAmount ? String(item.targetAmount) : '',
-        targetDate: item.targetDate || '2028-12-31',
-        memo: item.memo || '',
-      });
-    } else {
-      setEditingId(null);
-      setGoalForm({
-        goalName: '',
-        goalType: '부채상환',
-        targetAmount: '',
-        targetDate: '2028-12-31',
-        memo: '',
-      });
-    }
-    setActiveModal('goal');
   };
 
   // Save Handlers
@@ -750,39 +697,6 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
     setActiveModal(null);
   };
 
-  const handleSaveGoal = () => {
-    if (!goalForm.goalName.trim()) return;
-    const amount = parseNumber(goalForm.targetAmount);
-    let nextList: OnboardingGoal[] = [];
-    if (editingId) {
-      nextList = goals.map((g) =>
-        g.id === editingId
-          ? {
-              ...g,
-              goalName: goalForm.goalName.trim(),
-              goalType: goalForm.goalType,
-              targetAmount: amount,
-              targetDate: goalForm.targetDate,
-              memo: goalForm.memo,
-            }
-          : g
-      );
-    } else {
-      const newItem: OnboardingGoal = {
-        id: `gol-${Date.now()}`,
-        goalName: goalForm.goalName.trim(),
-        goalType: goalForm.goalType,
-        targetAmount: amount,
-        targetDate: goalForm.targetDate,
-        memo: goalForm.memo,
-      };
-      nextList = [...goals, newItem];
-    }
-    setGoals(nextList);
-    GlobalMockDataStore.updateOnboardingData({ onboardingGoals: nextList });
-    setActiveModal(null);
-  };
-
   // Delete Handlers
   const handleDeleteFamily = (id: string) => {
     const nextList = familyMembers.filter((item) => item.id !== id);
@@ -804,11 +718,6 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
     setDebts(nextList);
     GlobalMockDataStore.updateOnboardingData({ onboardingDebts: nextList });
   };
-  const handleDeleteGoal = (id: string) => {
-    const nextList = goals.filter((item) => item.id !== id);
-    setGoals(nextList);
-    GlobalMockDataStore.updateOnboardingData({ onboardingGoals: nextList });
-  };
 
   return (
     <div className="min-h-screen bg-[#f7f9fb] text-[#191c1e] flex flex-col justify-between max-w-2xl mx-auto px-5 py-6 font-pretendard">
@@ -827,11 +736,11 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
             <div className="w-8" />
           )}
 
-          {/* Step numbers indicator (Only for step1 ~ step5) */}
+          {/* Step numbers indicator (Only for step1 ~ step4) */}
           {stepInfo ? (
             <div className="flex items-center gap-1.5 font-dohyeon text-sm text-[#00236f]">
               <span className="bg-[#00236f] text-white px-2.5 py-0.5 rounded-full text-xs font-bold">
-                {stepInfo.num} / 5
+                {stepInfo.num} / 4
               </span>
               <span>{stepInfo.title}</span>
             </div>
@@ -880,7 +789,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                 우리집 CFO를 시작해볼까요
               </h1>
               <p className="font-body-sm text-sm text-[#444651] max-w-sm leading-relaxed whitespace-pre-line text-center">
-                {`가족의 소득, 자산, 부채와 목표를 등록하면\n우리집 재무현황을 한눈에 관리할 수 있습니다`}
+                {`가족의 소득, 자산, 부채를 등록하면\n우리집 재무현황을 한눈에 관리할 수 있습니다`}
               </p>
             </div>
 
@@ -1406,106 +1315,6 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
           </div>
         )}
 
-        {/* ================= Step 5: 목표 (Goals) ================= */}
-        {currentStep === 'step5' && (
-          <div className="space-y-6 animate-fadeIn">
-            <div>
-              <span className="text-xs font-bold text-[#00236f] bg-[#00236f]/10 px-2.5 py-1 rounded-md">
-                5단계 / 목표
-              </span>
-              <h2 className="font-dohyeon text-2xl text-[#00236f] mt-3 mb-1">
-                재무 목표를 등록해주세요
-              </h2>
-              <p className="text-xs text-[#757682]">
-                부채상환, 내집마련, 비상금, 여행 등 가족의 미래 목표를 설정하세요.
-              </p>
-            </div>
-
-            {/* Goal List */}
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="font-dohyeon text-base text-[#00236f] flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-lg">flag</span>
-                  등록된 목표 목록
-                  <span className="text-xs font-normal text-[#757682]">
-                    ({goals.length}건)
-                  </span>
-                </h3>
-              </div>
-
-              {goals.length === 0 ? (
-                <div className="bg-white p-6 rounded-2xl border border-dashed border-[#c5c5d3] text-center text-xs text-[#757682] space-y-2">
-                  <p>등록된 목표 항목이 없습니다.</p>
-                  <p className="text-[11px] text-[#9090a0]">
-                    아래 버튼을 눌러 대출상환, 비상금 목표 등을 등록해 보세요.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {goals.map((goal) => (
-                    <div
-                      key={goal.id}
-                      className="bg-white p-4 rounded-2xl border border-[#c5c5d3]/30 shadow-xs flex items-center justify-between"
-                    >
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-dohyeon text-base text-[#191c1e]">
-                            {goal.goalName}
-                          </span>
-                          <span className="text-[11px] font-bold bg-[#e8efff] text-[#00236f] px-2 py-0.5 rounded-md">
-                            {goal.goalType}
-                          </span>
-                        </div>
-                        <p className="text-xs text-[#444651]">
-                          목표 금액{' '}
-                          <span className="font-dohyeon text-base text-[#00236f]">
-                            {formatNumber(goal.targetAmount)}원
-                          </span>
-                        </p>
-                        {goal.targetDate && (
-                          <p className="text-[11px] text-[#757682]">
-                            목표 날짜: {goal.targetDate}
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => openGoalModal(goal)}
-                          className="p-1.5 text-[#757682] hover:text-[#00236f] hover:bg-[#f0f4fd] rounded-lg transition-colors cursor-pointer"
-                          title="수정"
-                        >
-                          <span className="material-symbols-outlined text-lg">edit</span>
-                        </button>
-                        <button
-                          onClick={() => handleDeleteGoal(goal.id)}
-                          className="p-1.5 text-[#757682] hover:text-[#ba1a1a] hover:bg-[#ffebee] rounded-lg transition-colors cursor-pointer"
-                          title="삭제"
-                        >
-                          <span className="material-symbols-outlined text-lg">delete</span>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Add Goal Button */}
-              <button
-                onClick={() => openGoalModal()}
-                className="w-full mt-3.5 py-3.5 bg-white border border-[#00236f]/30 text-[#00236f] font-dohyeon text-sm rounded-2xl hover:bg-[#f0f4fd] active:scale-[0.99] transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
-              >
-                <span className="material-symbols-outlined text-lg">add_circle</span>
-                + 목표 추가
-              </button>
-            </div>
-
-            <p className="text-center text-xs text-[#757682] mt-6">
-              나중에도 언제든 추가하거나 수정할 수 있습니다
-            </p>
-          </div>
-        )}
-
         {/* ================= Step Complete: 설정 완료 ================= */}
         {currentStep === 'complete' && (
           <div className="space-y-6 text-center animate-fadeIn py-6 my-auto">
@@ -1542,13 +1351,9 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                 <span className="text-[#757682]">등록된 자산</span>
                 <span className="font-bold text-[#191c1e]">{assets.length}건</span>
               </div>
-              <div className="flex justify-between border-b border-[#eceef0] pb-2">
+              <div className="flex justify-between">
                 <span className="text-[#757682]">등록된 부채</span>
                 <span className="font-bold text-[#ba1a1a]">{debts.length}건</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[#757682]">등록된 목표</span>
-                <span className="font-bold text-[#00236f]">{goals.length}건</span>
               </div>
             </div>
           </div>
@@ -1586,7 +1391,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                 onClick={handleNext}
                 className="w-2/3 py-3.5 bg-[#00236f] text-white font-dohyeon text-sm rounded-xl shadow-md hover:bg-[#1e3a8a] active:scale-[0.98] transition-all flex items-center justify-center gap-1 cursor-pointer"
               >
-                {currentStep === 'step5' ? '완료' : '다음'}
+                {currentStep === 'step4' ? '완료' : '다음'}
                 <span className="material-symbols-outlined text-lg">chevron_right</span>
               </button>
             </>
@@ -3117,124 +2922,6 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
           </div>
         );
       })()}
-
-      {/* 5. Goal Modal */}
-      {activeModal === 'goal' && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fadeIn">
-          <div className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-5 space-y-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-[#eceef0] pb-3">
-              <h3 className="font-dohyeon text-lg text-[#00236f]">
-                {editingId ? '목표 항목 수정' : '목표 항목 추가'}
-              </h3>
-              <button
-                onClick={() => setActiveModal(null)}
-                className="text-[#757682] hover:text-[#191c1e]"
-              >
-                <span className="material-symbols-outlined text-2xl">close</span>
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="font-bold text-[#444651] mb-1 block">목표명 *</label>
-                <input
-                  type="text"
-                  value={goalForm.goalName}
-                  onChange={(e) =>
-                    setGoalForm((prev) => ({ ...prev, goalName: e.target.value }))
-                  }
-                  placeholder="예: 현하우스 담보대출 5억원 이하 만들기, 비상금 3,000만원 만들기"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-sm text-[#191c1e] focus:outline-none focus:border-[#00236f]"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-[#444651] mb-1 block">목표종류 *</label>
-                <select
-                  value={goalForm.goalType}
-                  onChange={(e) =>
-                    setGoalForm((prev) => ({
-                      ...prev,
-                      goalType: e.target.value as any,
-                    }))
-                  }
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-sm text-[#191c1e] focus:outline-none focus:border-[#00236f]"
-                >
-                  <option value="부채상환">부채상환</option>
-                  <option value="내집마련">내집마련</option>
-                  <option value="비상금">비상금</option>
-                  <option value="투자">투자</option>
-                  <option value="교육">교육</option>
-                  <option value="은퇴">은퇴</option>
-                  <option value="여행">여행</option>
-                  <option value="기타">기타</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="font-bold text-[#444651] mb-1 block">
-                  목표 금액 (원) *
-                </label>
-                <input
-                  type="text"
-                  value={formatNumber(goalForm.targetAmount)}
-                  onChange={(e) =>
-                    setGoalForm((prev) => ({
-                      ...prev,
-                      targetAmount: e.target.value.replace(/[^0-9]/g, ''),
-                    }))
-                  }
-                  placeholder="예: 500,000,000"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-sm font-semibold text-[#00236f] focus:outline-none focus:border-[#00236f]"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-[#444651] mb-1 block">목표 날짜</label>
-                <input
-                  type="date"
-                  value={goalForm.targetDate}
-                  onChange={(e) =>
-                    setGoalForm((prev) => ({
-                      ...prev,
-                      targetDate: e.target.value,
-                    }))
-                  }
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-sm text-[#191c1e] focus:outline-none focus:border-[#00236f]"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-[#444651] mb-1 block">메모 (선택)</label>
-                <input
-                  type="text"
-                  value={goalForm.memo}
-                  onChange={(e) =>
-                    setGoalForm((prev) => ({ ...prev, memo: e.target.value }))
-                  }
-                  placeholder="메모 입력"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#c5c5d3]/40 bg-[#f7f9fb] text-sm text-[#191c1e] focus:outline-none focus:border-[#00236f]"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <button
-                onClick={() => setActiveModal(null)}
-                className="w-1/3 py-3 bg-[#f0f2f5] text-[#444651] font-dohyeon text-xs rounded-xl"
-              >
-                취소
-              </button>
-              <button
-                onClick={handleSaveGoal}
-                className="w-2/3 py-3 bg-[#00236f] text-white font-dohyeon text-xs rounded-xl shadow-md"
-              >
-                저장
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

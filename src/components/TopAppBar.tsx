@@ -55,10 +55,8 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
         screenTitle = '현금흐름';
         break;
       case '4-0':
-        screenTitle = '우리집 CFO';
-        break;
       case '4-1':
-        screenTitle = '미래 일정';
+        screenTitle = '플래너';
         break;
       case '4-2':
         screenTitle = '목표·시뮬레이션';
@@ -68,7 +66,13 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
     }
   }
 
-  const isDetailScreen = showBack ?? (currentScreen !== '1-0' && currentScreen !== '2-0' && currentScreen !== '3-0' && currentScreen !== '4-0');
+  const isDetailScreen =
+    showBack ??
+    (currentScreen !== '1-0' &&
+      currentScreen !== '2-0' &&
+      currentScreen !== '3-0' &&
+      currentScreen !== '4-0' &&
+      currentScreen !== '4-1');
 
   // Back destination fallback logic
   const handleBack = () => {
@@ -80,7 +84,7 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
       if (currentScreen.startsWith('1-')) onNavigate('1-0');
       else if (currentScreen.startsWith('2-')) onNavigate('2-0');
       else if (currentScreen.startsWith('3-')) onNavigate('3-0');
-      else if (currentScreen.startsWith('4-')) onNavigate('4-0');
+      else if (currentScreen.startsWith('4-')) onNavigate('4-1');
     }
   };
 

@@ -27,9 +27,7 @@ import { AssetsMainScreen } from './screens/AssetsMainScreen';
 import { AssetsDebtsScreen } from './screens/AssetsDebtsScreen';
 import { CashflowScreen } from './screens/CashflowScreen';
 
-import { PlannerMainScreen } from './screens/PlannerMainScreen';
 import { FutureScheduleScreen } from './screens/FutureScheduleScreen';
-import { GoalsSimulationScreen } from './screens/GoalsSimulationScreen';
 
 import { GlobalMockDataStore } from './services/dataStore';
 
@@ -97,6 +95,10 @@ export function App() {
 
   const handleAddSchedule = async (newSch: ScheduleEvent) => {
     await GlobalMockDataStore.addSchedule(newSch);
+  };
+
+  const handleUpdateSchedule = async (updatedSch: ScheduleEvent) => {
+    await GlobalMockDataStore.updateSchedule(updatedSch);
   };
 
   // CSV Import Handler
@@ -235,25 +237,16 @@ export function App() {
       case '3-2':
         return <CashflowScreen onNavigate={setCurrentScreen} />;
 
-      // 4. Planner Tab
+      // 4. Planner Tab (Future Schedule)
       case '4-0':
-        return (
-          <PlannerMainScreen
-            onNavigate={setCurrentScreen}
-            goals={goals}
-            schedules={schedules}
-          />
-        );
       case '4-1':
+      case '4-2':
         return (
           <FutureScheduleScreen
             schedules={schedules}
             onAddSchedule={handleAddSchedule}
+            onUpdateSchedule={handleUpdateSchedule}
           />
-        );
-      case '4-2':
-        return (
-          <GoalsSimulationScreen goals={goals} onAddGoal={handleAddGoal} />
         );
 
       default:
