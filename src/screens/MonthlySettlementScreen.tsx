@@ -249,11 +249,21 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   const [recordsMap, setRecordsMap] = useState<Record<string, MonthlySettlementRecord>>(() => {
     try {
       const saved = localStorage.getItem('cfo_monthly_records_v3');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        delete parsed['2026년 5월'];
+        delete parsed['2026년 6월'];
+        try {
+          localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(parsed));
+        } catch (e) {
+          console.error(e);
+        }
+        return parsed;
+      }
     } catch (e) {
       console.error(e);
     }
-    // Initial default records
+    // Initial default records - 2026년 4월 actual data only
     return {
       '2026년 4월': {
         month: '2026년 4월',
@@ -277,138 +287,6 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
         transactions: [],
         completedAtDate: '2026.05.02',
         completedAtTime: '18:30',
-      },
-      '2026년 5월': {
-        month: '2026년 5월',
-        status: '결산잠금',
-        currentStep: 5,
-        incomes: [
-          { id: 'inc-1', incomeName: '미용실 본점', incomeType: '사업소득', amount: 4800000, prevAmount: 4600000 },
-          { id: 'inc-2', incomeName: '게스트하우스1', incomeType: '사업소득', amount: 1200000, prevAmount: 1100000 },
-          { id: 'inc-3', incomeName: '현하우스 임대료', incomeType: '임대소득', amount: 1500000, prevAmount: 1500000 },
-        ],
-        savingsInvestments: [
-          { id: 'sav-1', name: '청년희망적금', type: '적금', tradeType: '단순저축', amount: 500000, memo: '매월 자동이체' },
-          { id: 'sav-2', name: '미래에셋 주식', type: '주식', tradeType: '매수', amount: 1000000 },
-        ],
-        csvUploaded: true,
-        csvFileName: '5월_카드통장내역.csv',
-        csvTotalCount: 245,
-        csvAutoCount: 238,
-        csvReviewCount: 7,
-        transactions: [],
-        completedAtDate: '2026.06.02',
-        completedAtTime: '19:40',
-      },
-      '2026년 6월': {
-        month: '2026년 6월',
-        status: '진행중',
-        currentStep: 1,
-        incomes: [
-          { id: 'inc-1', incomeName: '미용실 본점', incomeType: '사업소득', amount: 4500000, prevAmount: 4200000 },
-          { id: 'inc-2', incomeName: '미용실 2호점', incomeType: '사업소득', amount: 2200000, prevAmount: 2100000 },
-          { id: 'inc-3', incomeName: '게스트하우스1', incomeType: '사업소득', amount: 1100000, prevAmount: 1200000 },
-          { id: 'inc-4', incomeName: '현하우스 임대료', incomeType: '임대소득', amount: 1500000, prevAmount: 1500000 },
-        ],
-        savingsInvestments: [
-          { id: 'sav-1', name: '청년희망적금', type: '적금', tradeType: '단순저축', amount: 500000, memo: '자동이체' },
-          { id: 'sav-2', name: '삼성전자 ETF', type: 'ETF', tradeType: '매수', amount: 1000000 },
-        ],
-        csvUploaded: true,
-        csvFileName: '6월_신한카드_통장.csv',
-        csvTotalCount: 281,
-        csvAutoCount: 272,
-        csvReviewCount: 9,
-        transactions: [
-          {
-            id: 'tx-101',
-            date: '06.28 14:20',
-            merchant: 'AWS 클라우드 서버',
-            amount: 124000,
-            category: '서버/IT',
-            type: 'business',
-            needsReview: false,
-            confidenceLevel: 'high',
-            confidenceScore: 98,
-          },
-          {
-            id: 'tx-102',
-            date: '06.26 19:30',
-            merchant: '스타벅스 선릉점',
-            amount: 14200,
-            category: '식비',
-            type: 'living',
-            needsReview: false,
-            confidenceLevel: 'high',
-            confidenceScore: 96,
-          },
-          {
-            id: 'tx-103',
-            date: '06.25 11:00',
-            merchant: '대출 원리금상환',
-            amount: 1800000,
-            category: '부채상환',
-            type: 'debt',
-            needsReview: true,
-            confidenceLevel: 'medium',
-            confidenceScore: 78,
-          },
-          {
-            id: 'tx-104',
-            date: '06.25 11:00',
-            merchant: '대출 이자납입',
-            amount: 350000,
-            category: '금융비용',
-            type: 'financial',
-            needsReview: true,
-            confidenceLevel: 'medium',
-            confidenceScore: 72,
-          },
-          {
-            id: 'tx-105',
-            date: '06.22 18:40',
-            merchant: '이마트 양재점',
-            amount: 145000,
-            category: '장보기',
-            type: 'living',
-            needsReview: false,
-            confidenceLevel: 'high',
-            confidenceScore: 94,
-          },
-          {
-            id: 'tx-106',
-            date: '06.20 12:15',
-            merchant: '미용재료 도매상가',
-            amount: 880000,
-            category: '재료비',
-            type: 'business',
-            needsReview: true,
-            confidenceLevel: 'low',
-            confidenceScore: 61,
-          },
-          {
-            id: 'tx-107',
-            date: '06.18 20:10',
-            merchant: '배달의민족',
-            amount: 38000,
-            category: '외식',
-            type: 'living',
-            needsReview: false,
-            confidenceLevel: 'high',
-            confidenceScore: 95,
-          },
-          {
-            id: 'tx-108',
-            date: '06.15 09:30',
-            merchant: '알 수 없는 카카오페이',
-            amount: 55000,
-            category: '미분류',
-            type: 'unclassified',
-            needsReview: true,
-            confidenceLevel: 'low',
-            confidenceScore: 52,
-          },
-        ],
       },
     };
   });
@@ -523,7 +401,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
 
   // Step 1 Input Values State (map sourceId -> string)
   const [step1Inputs, setStep1Inputs] = useState<Record<string, string>>(() => {
-    const { year, month } = parseYearMonth('2026년 6월');
+    const { year, month } = parseYearMonth(formattedSelectedMonth || '2026년 4월');
     const initialSources = GlobalMockDataStore.getIncomeSources().filter((i) => i.isActive !== false);
     return loadStep1InputsForMonth(year, month, initialSources);
   });

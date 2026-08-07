@@ -198,12 +198,33 @@ const loadSnapshotStore = (): SnapshotStoreState => {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && parsed.monthlySnapshots && Object.keys(parsed.monthlySnapshots).length > 0) {
+        // Sanitize test snapshots for 2026-05 and 2026-06
+        delete parsed.monthlySnapshots['2026-05'];
+        delete parsed.monthlySnapshots['2026-06'];
+        if (parsed.assetSnapshots) {
+          delete parsed.assetSnapshots['2026-05'];
+          delete parsed.assetSnapshots['2026-06'];
+        }
+        if (parsed.debtSnapshots) {
+          delete parsed.debtSnapshots['2026-05'];
+          delete parsed.debtSnapshots['2026-06'];
+        }
+        if (parsed.debtMovements) {
+          delete parsed.debtMovements['2026-05'];
+          delete parsed.debtMovements['2026-06'];
+        }
+
         // If 2026-04 seed exists in storage as draft, mark confirmed as default 2026-04 opening snapshot
         if (parsed.monthlySnapshots['2026-04'] && parsed.monthlySnapshots['2026-04'].id === 'opening-2026-04-seed') {
           parsed.monthlySnapshots['2026-04'].status = 'confirmed';
           if (!parsed.monthlySnapshots['2026-04'].confirmedAt) {
             parsed.monthlySnapshots['2026-04'].confirmedAt = '2026-04-01T00:00:00.000Z';
           }
+        }
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+        } catch (e) {
+          console.error(e);
         }
         return {
           monthlySnapshots: parsed.monthlySnapshots || {},

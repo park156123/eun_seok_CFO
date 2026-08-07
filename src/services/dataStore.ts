@@ -107,106 +107,7 @@ const DEFAULT_INITIAL_INCOME_SOURCES: IncomeSource[] = [
   },
 ];
 
-const DEFAULT_INITIAL_INCOME_RECORDS: IncomeRecord[] = [
-  // 2026년 5월 기록
-  {
-    id: 'rec-2026-05-inc-1',
-    incomeSourceId: 'inc-1',
-    year: 2026,
-    month: 5,
-    actualIncome: 4200000,
-    incomeModeSnapshot: 'variable',
-    incomeTypeSnapshot: '사업소득',
-    incomeSourceNameSnapshot: '미용실 본점',
-    createdAt: '2026-06-01',
-    updatedAt: '2026-06-01',
-  },
-  {
-    id: 'rec-2026-05-inc-2',
-    incomeSourceId: 'inc-2',
-    year: 2026,
-    month: 5,
-    actualIncome: 2100000,
-    incomeModeSnapshot: 'variable',
-    incomeTypeSnapshot: '사업소득',
-    incomeSourceNameSnapshot: '미용실 2호점',
-    createdAt: '2026-06-01',
-    updatedAt: '2026-06-01',
-  },
-  {
-    id: 'rec-2026-05-inc-3',
-    incomeSourceId: 'inc-3',
-    year: 2026,
-    month: 5,
-    actualIncome: 1200000,
-    incomeModeSnapshot: 'variable',
-    incomeTypeSnapshot: '사업소득',
-    incomeSourceNameSnapshot: '게스트하우스1',
-    createdAt: '2026-06-01',
-    updatedAt: '2026-06-01',
-  },
-  {
-    id: 'rec-2026-05-inc-4',
-    incomeSourceId: 'inc-4',
-    year: 2026,
-    month: 5,
-    actualIncome: 4180000,
-    incomeModeSnapshot: 'fixed',
-    incomeTypeSnapshot: '임대소득',
-    incomeSourceNameSnapshot: '현하우스 임대료',
-    createdAt: '2026-06-01',
-    updatedAt: '2026-06-01',
-  },
-  // 2026년 6월 기록
-  {
-    id: 'rec-2026-06-inc-1',
-    incomeSourceId: 'inc-1',
-    year: 2026,
-    month: 6,
-    actualIncome: 4500000,
-    incomeModeSnapshot: 'variable',
-    incomeTypeSnapshot: '사업소득',
-    incomeSourceNameSnapshot: '미용실 본점',
-    createdAt: '2026-07-01',
-    updatedAt: '2026-07-01',
-  },
-  {
-    id: 'rec-2026-06-inc-2',
-    incomeSourceId: 'inc-2',
-    year: 2026,
-    month: 6,
-    actualIncome: 2200000,
-    incomeModeSnapshot: 'variable',
-    incomeTypeSnapshot: '사업소득',
-    incomeSourceNameSnapshot: '미용실 2호점',
-    createdAt: '2026-07-01',
-    updatedAt: '2026-07-01',
-  },
-  {
-    id: 'rec-2026-06-inc-3',
-    incomeSourceId: 'inc-3',
-    year: 2026,
-    month: 6,
-    actualIncome: 1100000,
-    incomeModeSnapshot: 'variable',
-    incomeTypeSnapshot: '사업소득',
-    incomeSourceNameSnapshot: '게스트하우스1',
-    createdAt: '2026-07-01',
-    updatedAt: '2026-07-01',
-  },
-  {
-    id: 'rec-2026-06-inc-4',
-    incomeSourceId: 'inc-4',
-    year: 2026,
-    month: 6,
-    actualIncome: 4180000,
-    incomeModeSnapshot: 'fixed',
-    incomeTypeSnapshot: '임대소득',
-    incomeSourceNameSnapshot: '현하우스 임대료',
-    createdAt: '2026-07-01',
-    updatedAt: '2026-07-01',
-  },
-];
+const DEFAULT_INITIAL_INCOME_RECORDS: IncomeRecord[] = [];
 
 const initNow = new Date();
 const initYear = initNow.getFullYear();
@@ -348,10 +249,9 @@ class GlobalMockDataStoreImpl implements IDataStore {
             incomeSources: (parsed.monthlyIncome?.incomeSources && parsed.monthlyIncome.incomeSources.length > 0
               ? parsed.monthlyIncome.incomeSources
               : DEFAULT_INITIAL_INCOME_SOURCES).map(normalizeIncomeSource),
-            incomeRecords:
-              parsed.monthlyIncome?.incomeRecords && parsed.monthlyIncome.incomeRecords.length > 0
-                ? parsed.monthlyIncome.incomeRecords
-                : DEFAULT_INITIAL_INCOME_RECORDS,
+            incomeRecords: (parsed.monthlyIncome?.incomeRecords || []).filter(
+              (r: IncomeRecord) => !(r.year === 2026 && (r.month === 5 || r.month === 6))
+            ),
             legacyMonthlyTotalIncome: parsed.monthlyIncome?.legacyMonthlyTotalIncome,
           },
           fixedExpenses: parsed.fixedExpenses || [],
