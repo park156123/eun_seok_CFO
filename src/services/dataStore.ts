@@ -1325,13 +1325,30 @@ class GlobalMockDataStoreImpl implements IDataStore {
     const consumerSummary = this.getConsumerSpendingSummary();
     const livingExpenses = consumerSummary.totalExpense;
 
-    const totalOutflow = livingExpenses + financialCost + principalRepayment + otherFixed;
+    // Retrieve savings & investments for the target month from settlement records
+    const formattedMonthKey = `${year}년 ${month}월`;
+    let totalSavings = 0;
+    try {
+      const savedRecords = localStorage.getItem('cfo_monthly_records_v3');
+      if (savedRecords) {
+        const parsed = JSON.parse(savedRecords);
+        const record = parsed[formattedMonthKey];
+        if (record && Array.isArray(record.savingsInvestments)) {
+          totalSavings = record.savingsInvestments.reduce((sum: number, item: any) => sum + (Number(item.amount) || 0), 0);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+
+    const totalOutflow = livingExpenses + financialCost + principalRepayment + otherFixed + totalSavings;
     const netCashflow = incomeSummary.totalInflow - totalOutflow;
 
     const outflowDetails = [
       { id: 'living', name: '생활지출 (카드/현금)', category: '생활비', amount: livingExpenses },
       { id: 'interest', name: '금융비용 (대출이자)', category: '금융비용', amount: financialCost },
       { id: 'principal', name: '대출 원금상환액', category: '부채상환', amount: principalRepayment },
+      ...(totalSavings > 0 ? [{ id: 'savings', name: '저축·투자 (자산증가)', category: '저축/투자', amount: totalSavings }] : []),
       ...fixedExps.map((f) => ({
         id: f.id,
         name: f.name,

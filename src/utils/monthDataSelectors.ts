@@ -131,6 +131,7 @@ export interface MonthlySettlementSummaryResult {
 
   financialCost: number;         // 금융비용
   totalSavings: number;          // 저축/투자
+  netCashflow: number;           // 순현금흐름
 }
 
 /**
@@ -178,6 +179,7 @@ export function getMonthlySettlementSummary(selectedMonthInput: string): Monthly
       debtPrincipal: 0,
       financialCost: 0,
       totalSavings: 0,
+      netCashflow: 0,
     };
   }
 
@@ -253,6 +255,7 @@ export function getMonthlySettlementSummary(selectedMonthInput: string): Monthly
     debtPrincipal,
     financialCost,
     totalSavings,
+    netCashflow: totalIncome - totalOutflow,
   };
 }
 

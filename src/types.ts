@@ -545,6 +545,8 @@ export interface AssetSnapshot {
   assetId?: string; // Link to Master Asset
   assetNameSnapshot: string;
   assetTypeSnapshot: string;
+  category?: string;
+  subType?: string;
   value: number;
   valuationMethod?: string;
   memo?: string;
@@ -570,6 +572,11 @@ export interface DebtSnapshot {
   endingPrincipal: number;
   interestExpense: number;
   interestRate?: number;
+  repaymentMethod?: string;
+  paymentDay?: number;
+  rateType?: string;
+  maturityDate?: string;
+  gracePeriodEndDate?: string;
   statusAtMonthEnd: 'active' | 'fully-repaid';
   source: SnapshotSource;
   memo?: string;

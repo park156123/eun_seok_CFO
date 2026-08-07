@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { GlobalMockDataStore } from '../services/dataStore';
-import { SnapshotService } from '../services/snapshotService';
+import { SnapshotService, normalizeMonthKey } from '../services/snapshotService';
 import {
   wonToMan,
   manToWon,
@@ -8,6 +8,7 @@ import {
   parseManInputValue,
   formatKoreanAmountFromMan,
 } from '../utils/amountUtils';
+import { calculateMonthlyInterest } from '../utils/financialCostCalculator';
 
 interface OpeningSnapshotModalProps {
   isOpen: boolean;
@@ -19,7 +20,8 @@ interface OpeningSnapshotModalProps {
 interface AssetItemState {
   id: string;
   name: string;
-  category: string;
+  category: string; // '금융자산' | '부동산' | '기타'
+  subType?: string; // '주식', '예금/적금', '현금', '아파트' etc.
   refValue: number; // Master current reference value
   value: number; // User entered starting value
   memo: string;
@@ -31,9 +33,12 @@ interface AssetItemState {
 interface DebtItemState {
   id: string;
   name: string;
-  creditor: string;
+  creditor?: string;
   refPrincipal: number; // Master current reference principal
   openingPrincipal: number; // User entered starting principal
+  interestRate?: number; // Annual interest rate (%)
+  repaymentMethod?: string; // '원리금상환', '원금균등상환', '만기일시상환(이자만)', etc.
+  paymentDay?: number; // Monthly payment day (1-31)
   scheduledPrincipalRepayment: number;
   memo: string;
   showMemo?: boolean;
@@ -80,29 +85,49 @@ const formatConfirmedDate = (isoStr?: string | null): string => {
   }
 };
 
+const ASSET_CATEGORIES = ['금융자산', '부동산', '기타'] as const;
+
+const ASSET_SUBTYPES: Record<string, string[]> = {
+  금융자산: ['주식', '예금/적금', '현금', '기타 금융자산'],
+  부동산: ['아파트', '주택', '상가/토지', '전세보증금', '기타 부동산'],
+  기타: ['기타자산', '차량', '금/현물'],
+};
+
+const REPAYMENT_METHODS = ['원리금상환', '원금균등상환', '만기일시상환(이자만)', '기타상환'] as const;
+
 const getInitialMasterAssets = (): AssetItemState[] => {
   const assetsData = GlobalMockDataStore.getAssets();
   let masters: any[] = [];
   if (Array.isArray(assetsData)) {
     masters = assetsData;
   } else if (assetsData?.onboardingAssets && assetsData.onboardingAssets.length > 0) {
-    masters = assetsData.onboardingAssets.map((a: any) => ({
-      id: a.id,
-      name: a.assetName || a.name || '자산',
-      category: a.assetType || a.category || '기타자산',
-      amount: Number(a.currentValue) || Number(a.amount) || 0,
-      memo: a.memo || '',
-    }));
+    masters = assetsData.onboardingAssets;
   } else if (assetsData?.mainAssets) {
     masters = assetsData.mainAssets;
   }
 
   return masters.map((ma: any) => {
     const masterVal = Number(ma.amount) || Number(ma.currentValue) || 0;
+    const origType = ma.assetType || ma.category || '금융자산';
+    let cat = '금융자산';
+    let sub = '기타';
+
+    if (['부동산', '아파트', '주택', '상가', '토지', '빌라', '오피스텔', 'real_estate'].some((k) => origType.includes(k))) {
+      cat = '부동산';
+      sub = origType.includes('아파트') ? '아파트' : origType.includes('주택') ? '주택' : '기타 부동산';
+    } else if (['금융', '주식', '예금', '적금', '현금', '통장', 'financial'].some((k) => origType.includes(k))) {
+      cat = '금융자산';
+      sub = origType.includes('주식') ? '주식' : origType.includes('예금') || origType.includes('적금') ? '예금/적금' : origType.includes('현금') ? '현금' : '기타 금융자산';
+    } else {
+      cat = '기타';
+      sub = '기타자산';
+    }
+
     return {
       id: ma.id,
-      name: ma.name || ma.assetName || '자산',
-      category: ma.category || ma.assetType || '기타자산',
+      name: ma.assetName || ma.name || '자산',
+      category: ma.category || cat,
+      subType: ma.subType || sub,
       refValue: masterVal,
       value: masterVal, // Pre-fill with master default value
       memo: ma.memo || '',
@@ -118,30 +143,61 @@ const getInitialMasterDebts = (): DebtItemState[] => {
   let masters: any[] = [];
   if (Array.isArray(debtsData)) {
     masters = debtsData;
-  } else if (debtsData?.onboardingDebts && debtsData.onboardingDebts.length > 0) {
-    masters = debtsData.onboardingDebts.map((d: any) => ({
-      id: d.id,
-      name: d.debtName || d.name || '부채',
-      amount: Number(d.currentBalance) || Number(d.amount) || 0,
-      principalRepayment: Number(d.manualPrincipalPayment) || Number(d.currentPrincipalPayment) || 0,
-      creditor: d.creditorName || d.creditor || '금융기관',
-      memo: d.memo || '',
-    }));
-  } else if (debtsData?.mainDebts) {
-    masters = debtsData.mainDebts;
+  } else if (debtsData) {
+    const ob = Array.isArray((debtsData as any).onboardingDebts) ? (debtsData as any).onboardingDebts : [];
+    const main = Array.isArray((debtsData as any).mainDebts) ? (debtsData as any).mainDebts : [];
+    if (ob.length > 0 && main.length > 0) {
+      const obIds = new Set(ob.map((x: any) => x.id));
+      masters = [...ob, ...main.filter((x: any) => !obIds.has(x.id))];
+    } else if (ob.length > 0) {
+      masters = ob;
+    } else {
+      masters = main;
+    }
   }
 
+  const parseDay = (val: any): number | undefined => {
+    if (val === undefined || val === null) return undefined;
+    if (typeof val === 'number') return isNaN(val) ? undefined : val;
+    const str = String(val).replace(/[^0-9]/g, '');
+    const parsed = parseInt(str, 10);
+    return isNaN(parsed) ? undefined : parsed;
+  };
+
   return masters.map((md: any) => {
-    const name = md.name || md.debtName || '부채';
-    const masterBal = Number(md.amount) || Number(md.currentBalance) || 0;
-    const creditor = md.creditor || (name.includes('담보') || name.includes('대출') ? '금융기관' : '개인/금융');
+    const name = md.debtName || md.name || '부채';
+    const masterBal = Number(md.currentBalance) || Number(md.amount) || Number(md.originalPrincipal) || 0;
+
+    const rate =
+      md.interestRate !== undefined && md.interestRate !== null
+        ? Number(md.interestRate)
+        : md.annualRate !== undefined && md.annualRate !== null
+        ? Number(md.annualRate)
+        : md.rate !== undefined && md.rate !== null
+        ? Number(md.rate)
+        : undefined;
+
+    const rep =
+      md.repaymentMethod ||
+      md.repaymentType ||
+      md.paymentType ||
+      md.rateType ||
+      md.amortizationType ||
+      undefined;
+
+    const day = parseDay(md.paymentDay ?? md.dueDay ?? md.monthlyPaymentDay ?? md.interestPaymentDay ?? md.repaymentDay ?? md.nextDueDate);
+    const creditor = md.creditorName || md.creditor || md.lender || undefined;
+
     return {
       id: md.id,
       name,
       creditor,
       refPrincipal: masterBal,
-      openingPrincipal: masterBal, // Pre-fill with master default balance
-      scheduledPrincipalRepayment: Number(md.principalRepayment) || 0,
+      openingPrincipal: masterBal,
+      interestRate: rate,
+      repaymentMethod: rep,
+      paymentDay: day,
+      scheduledPrincipalRepayment: Number(md.manualPrincipalPayment) || Number(md.currentPrincipalPayment) || Number(md.principalRepayment) || 0,
       memo: md.memo || '',
       showMemo: false,
       isIncluded: true,
@@ -156,9 +212,10 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
   selectedMonth,
   onConfirmed,
 }) => {
-  // Parse month string into YYYY-MM and formatted display
+  // Parse month string strictly based on selectedMonth
   const { yearMonthStr, displayMonth, defaultRefDate } = useMemo(() => {
-    const match = selectedMonth.match(/(\d{4})[^\d]?(\d{1,2})/);
+    let monthInput = selectedMonth || '';
+    const match = monthInput.match(/(\d{4})[^\d]?(\d{1,2})/);
     if (match) {
       const y = match[1];
       const m = String(parseInt(match[2], 10)).padStart(2, '0');
@@ -168,10 +225,14 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
         defaultRefDate: `${y}-${m}-01`,
       };
     }
+    const norm = normalizeMonthKey(monthInput);
+    const parts = norm.split('-');
+    const y = parts[0] || '2026';
+    const m = parts[1] || '04';
     return {
-      yearMonthStr: '2026-04',
-      displayMonth: selectedMonth || '2026년 4월',
-      defaultRefDate: '2026-04-01',
+      yearMonthStr: `${y}-${m}`,
+      displayMonth: `${y}년 ${parseInt(m, 10)}월`,
+      defaultRefDate: `${y}-${m}-01`,
     };
   }, [selectedMonth]);
 
@@ -181,6 +242,7 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
   const [isEditingConfirmed, setIsEditingConfirmed] = useState<boolean>(false);
   const [showEditPrompt, setShowEditPrompt] = useState<boolean>(false);
   const [confirmedAtDate, setConfirmedAtDate] = useState<string | null>(null);
+  const [isInheritedFromPrevMonth, setIsInheritedFromPrevMonth] = useState<boolean>(false);
 
   const isReadOnly = isConfirmed && !isEditingConfirmed;
 
@@ -189,18 +251,31 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
   const [diagnosticStep, setDiagnosticStep] = useState<string>('대기');
   const [showInModalConfirm, setShowInModalConfirm] = useState<boolean>(false);
 
-  // Initial Master Assets
-  const [assetItems, setAssetItems] = useState<AssetItemState[]>(getInitialMasterAssets);
+  // Assets and Debts state
+  const [assetItems, setAssetItems] = useState<AssetItemState[]>([]);
+  const [debtItems, setDebtItems] = useState<DebtItemState[]>([]);
 
-  // Initial Master Debts
-  const [debtItems, setDebtItems] = useState<DebtItemState[]>(getInitialMasterDebts);
+  // Helper to compute previous month key (e.g. '2026-05' -> '2026-04')
+  const getPreviousMonthKey = (monthKey: string): string => {
+    const norm = normalizeMonthKey(monthKey);
+    const parts = norm.split('-');
+    let y = parseInt(parts[0], 10) || 2026;
+    let m = parseInt(parts[1], 10) || 4;
+    if (m === 1) {
+      y -= 1;
+      m = 12;
+    } else {
+      m -= 1;
+    }
+    return `${y}-${String(m).padStart(2, '0')}`;
+  };
 
-  // Query and restore Opening Snapshot when modal opens
-  // Priority: Confirmed -> Draft -> Default master initial values
+  // Query and restore Opening Snapshot when modal opens for `yearMonthStr`
   useEffect(() => {
     setShowInModalConfirm(false);
     setShowEditPrompt(false);
     setIsEditingConfirmed(false);
+
     if (!isOpen) {
       setSaveFeedback('idle');
       setConfirmFeedback('idle');
@@ -211,7 +286,20 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
 
     try {
       const snap = GlobalMockDataStore.getOpeningSnapshotDraft(yearMonthStr);
+      const prevMonthKey = getPreviousMonthKey(yearMonthStr);
+      const prevSnap = GlobalMockDataStore.getOpeningSnapshotData(prevMonthKey);
+      const hasPrevConfirmed = Boolean(prevSnap && prevSnap.status === 'confirmed');
+
+      setIsInheritedFromPrevMonth(hasPrevConfirmed);
+
+      const mastersA = getInitialMasterAssets();
+      const mastersD = getInitialMasterDebts();
+
+      const normalizeStr = (s?: string | null) =>
+        s ? String(s).replace(/^\[|\]$/g, '').replace(/\s+/g, ' ').trim().toLowerCase() : '';
+
       if (snap) {
+        // Priority ① or ②: Existing snapshot (Confirmed or Draft) for yearMonthStr
         if (snap.status === 'confirmed') {
           setIsConfirmed(true);
           setConfirmedAtDate(snap.confirmedAt || snap.updatedAt || null);
@@ -222,22 +310,35 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
           setHasDraft(true);
         }
 
-        const refDate = snap.referenceDate || (snap as any).baseDate;
-        if (refDate) {
-          setReferenceDate(refDate);
-        }
-
-        const mastersA = getInitialMasterAssets();
-        const mastersD = getInitialMasterDebts();
+        const refDate = snap.referenceDate || (snap as any).baseDate || defaultRefDate;
+        setReferenceDate(refDate);
 
         if (Array.isArray(snap.assets) && snap.assets.length > 0) {
           const restoredAssets: AssetItemState[] = snap.assets.map((a: any) => {
             const masterMatch = mastersA.find((ma) => ma.id === (a.linkedAssetId || a.id));
+            const prevAsset = prevSnap?.assets?.find(
+              (pa: any) =>
+                (pa.linkedAssetId || pa.id) === (a.linkedAssetId || a.id) ||
+                pa.assetNameSnapshot === a.assetNameSnapshot
+            );
+            const category =
+              a.category ||
+              (a.assetTypeSnapshot
+                ? a.assetTypeSnapshot.includes('부동산')
+                  ? '부동산'
+                  : a.assetTypeSnapshot.includes('금융') || a.assetTypeSnapshot.includes('주식')
+                  ? '금융자산'
+                  : '기타'
+                : '금융자산');
+
+            const refVal = hasPrevConfirmed && prevAsset ? Number(prevAsset.value) || 0 : masterMatch ? masterMatch.refValue : 0;
+
             return {
               id: a.id || a.linkedAssetId || `asset-${Date.now()}`,
               name: a.assetNameSnapshot || a.name || masterMatch?.name || '자산',
-              category: a.assetTypeSnapshot || a.category || masterMatch?.category || '기타자산',
-              refValue: masterMatch ? masterMatch.refValue : 0,
+              category,
+              subType: a.subType || '',
+              refValue: refVal,
               value: Number(a.value) || 0,
               memo: a.memo || '',
               showMemo: Boolean(a.memo),
@@ -246,17 +347,71 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
             };
           });
           setAssetItems(restoredAssets);
+        } else {
+          setAssetItems(mastersA);
         }
 
         if (Array.isArray(snap.debts) && snap.debts.length > 0) {
           const restoredDebts: DebtItemState[] = snap.debts.map((d: any) => {
-            const masterMatch = mastersD.find((md) => md.id === (d.linkedDebtId || d.id));
+            const dNameNorm = normalizeStr(d.debtNameSnapshot || d.name);
+
+            const masterMatch =
+              mastersD.find((md) => md.id === (d.linkedDebtId || d.id) || md.id === d.debtId) ||
+              mastersD.find((md) => {
+                const mdNameNorm = normalizeStr(md.name);
+                return dNameNorm && mdNameNorm && (dNameNorm === mdNameNorm || dNameNorm.includes(mdNameNorm) || mdNameNorm.includes(dNameNorm));
+              });
+
+            const prevDebt = prevSnap?.debts?.find(
+              (pd: any) =>
+                (pd.linkedDebtId || pd.id) === (d.linkedDebtId || d.id) ||
+                normalizeStr(pd.debtNameSnapshot) === dNameNorm
+            );
+
+            const rate =
+              masterMatch?.interestRate !== undefined && masterMatch?.interestRate !== null
+                ? Number(masterMatch.interestRate)
+                : d.interestRate !== undefined && d.interestRate !== null
+                ? Number(d.interestRate)
+                : undefined;
+
+            const rep =
+              masterMatch?.repaymentMethod ||
+              d.repaymentMethod ||
+              d.debtTypeSnapshot ||
+              undefined;
+
+            const day =
+              masterMatch?.paymentDay !== undefined && masterMatch?.paymentDay !== null
+                ? Number(masterMatch.paymentDay)
+                : d.paymentDay !== undefined && d.paymentDay !== null
+                ? Number(d.paymentDay)
+                : undefined;
+
+            const creditor =
+              masterMatch?.creditor ||
+              d.creditorNameSnapshot ||
+              d.creditor ||
+              undefined;
+
+            const refPrin =
+              hasPrevConfirmed && prevDebt
+                ? prevDebt.endingPrincipal !== undefined
+                  ? Number(prevDebt.endingPrincipal)
+                  : Number(prevDebt.openingPrincipal) || 0
+                : masterMatch
+                ? masterMatch.refPrincipal
+                : 0;
+
             return {
               id: d.id || d.linkedDebtId || `debt-${Date.now()}`,
               name: d.debtNameSnapshot || d.name || masterMatch?.name || '부채',
-              creditor: d.creditorNameSnapshot || d.creditor || masterMatch?.creditor || '개인/금융',
-              refPrincipal: masterMatch ? masterMatch.refPrincipal : 0,
+              creditor,
+              refPrincipal: refPrin,
               openingPrincipal: Number(d.openingPrincipal) || 0,
+              interestRate: rate,
+              repaymentMethod: rep,
+              paymentDay: day,
               scheduledPrincipalRepayment: Number(d.scheduledPrincipalRepayment) || 0,
               memo: d.memo || '',
               showMemo: Boolean(d.memo),
@@ -265,14 +420,116 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
             };
           });
           setDebtItems(restoredDebts);
+        } else {
+          setDebtItems(mastersD);
         }
-      } else {
+      } else if (hasPrevConfirmed && prevSnap) {
+        // Priority ③: No snapshot for yearMonthStr, but previous month Confirmed Snapshot exists!
         setIsConfirmed(false);
         setConfirmedAtDate(null);
         setHasDraft(false);
         setReferenceDate(defaultRefDate);
-        setAssetItems(getInitialMasterAssets());
-        setDebtItems(getInitialMasterDebts());
+
+        if (Array.isArray(prevSnap.assets) && prevSnap.assets.length > 0) {
+          const inheritedAssets: AssetItemState[] = prevSnap.assets.map((a: any) => {
+            const masterMatch = mastersA.find((ma) => ma.id === (a.linkedAssetId || a.id));
+            const category =
+              a.category ||
+              (a.assetTypeSnapshot
+                ? a.assetTypeSnapshot.includes('부동산')
+                  ? '부동산'
+                  : a.assetTypeSnapshot.includes('금융') || a.assetTypeSnapshot.includes('주식')
+                  ? '금융자산'
+                  : '기타'
+                : '금융자산');
+            const val = Number(a.value) || 0;
+
+            return {
+              id: a.linkedAssetId || a.assetId || a.id || `inherited-asset-${Date.now()}-${Math.random()}`,
+              name: a.assetNameSnapshot || a.name || masterMatch?.name || '자산',
+              category,
+              subType: a.subType || '',
+              refValue: val,
+              value: val,
+              memo: a.memo || '',
+              showMemo: Boolean(a.memo),
+              isIncluded: a.isIncluded !== false,
+              isCustom: Boolean(a.isHistoricalOnly || a.isCustom || (!masterMatch && !a.linkedAssetId && !a.assetId)),
+            };
+          });
+          setAssetItems(inheritedAssets);
+        } else {
+          setAssetItems(mastersA);
+        }
+
+        if (Array.isArray(prevSnap.debts) && prevSnap.debts.length > 0) {
+          const inheritedDebts: DebtItemState[] = prevSnap.debts.map((d: any) => {
+            const dNameNorm = normalizeStr(d.debtNameSnapshot || d.name);
+
+            const masterMatch =
+              mastersD.find((md) => md.id === (d.linkedDebtId || d.id) || md.id === d.debtId) ||
+              mastersD.find((md) => {
+                const mdNameNorm = normalizeStr(md.name);
+                return dNameNorm && mdNameNorm && (dNameNorm === mdNameNorm || dNameNorm.includes(mdNameNorm) || mdNameNorm.includes(dNameNorm));
+              });
+
+            const prevPrincipal =
+              d.endingPrincipal !== undefined ? Number(d.endingPrincipal) : Number(d.openingPrincipal) || 0;
+
+            const rate =
+              masterMatch?.interestRate !== undefined && masterMatch?.interestRate !== null
+                ? Number(masterMatch.interestRate)
+                : d.interestRate !== undefined && d.interestRate !== null
+                ? Number(d.interestRate)
+                : undefined;
+
+            const rep =
+              masterMatch?.repaymentMethod ||
+              d.repaymentMethod ||
+              d.debtTypeSnapshot ||
+              undefined;
+
+            const day =
+              masterMatch?.paymentDay !== undefined && masterMatch?.paymentDay !== null
+                ? Number(masterMatch.paymentDay)
+                : d.paymentDay !== undefined && d.paymentDay !== null
+                ? Number(d.paymentDay)
+                : undefined;
+
+            const creditor =
+              masterMatch?.creditor ||
+              d.creditorNameSnapshot ||
+              d.creditor ||
+              undefined;
+
+            return {
+              id: d.linkedDebtId || d.debtId || d.id || `inherited-debt-${Date.now()}-${Math.random()}`,
+              name: d.debtNameSnapshot || d.name || masterMatch?.name || '부채',
+              creditor,
+              refPrincipal: prevPrincipal,
+              openingPrincipal: prevPrincipal,
+              interestRate: rate,
+              repaymentMethod: rep,
+              paymentDay: day,
+              scheduledPrincipalRepayment: Number(d.scheduledPrincipalRepayment) || 0,
+              memo: d.memo || '',
+              showMemo: Boolean(d.memo),
+              isIncluded: d.isIncluded !== false,
+              isCustom: Boolean(d.isHistoricalOnly || d.isCustom || (!masterMatch && !d.linkedDebtId && !d.debtId)),
+            };
+          });
+          setDebtItems(inheritedDebts);
+        } else {
+          setDebtItems(mastersD);
+        }
+      } else {
+        // Priority ④: No snapshot for yearMonthStr AND no previous month Confirmed Snapshot -> fallback to basic info
+        setIsConfirmed(false);
+        setConfirmedAtDate(null);
+        setHasDraft(false);
+        setReferenceDate(defaultRefDate);
+        setAssetItems(mastersA);
+        setDebtItems(mastersD);
       }
     } catch (error) {
       console.error('Failed to restore opening snapshot:', error);
@@ -314,7 +571,8 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
       {
         id: newId,
         name: '',
-        category: '과거자산',
+        category: '금융자산',
+        subType: '주식',
         refValue: 0,
         value: 0,
         memo: '',
@@ -352,6 +610,9 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
         creditor: '개인/지인',
         refPrincipal: 0,
         openingPrincipal: 0,
+        interestRate: 0,
+        repaymentMethod: '원리금상환',
+        paymentDay: 1,
         scheduledPrincipalRepayment: 0,
         memo: '',
         showMemo: false,
@@ -375,10 +636,9 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
       const snap = GlobalMockDataStore.getOpeningSnapshotDraft(yearMonthStr);
       if (snap) {
         setConfirmedAtDate(snap.confirmedAt || snap.updatedAt || null);
-        const refDate = snap.referenceDate || (snap as any).baseDate;
-        if (refDate) {
-          setReferenceDate(refDate);
-        }
+        const refDate = snap.referenceDate || (snap as any).baseDate || defaultRefDate;
+        setReferenceDate(refDate);
+
         const mastersA = getInitialMasterAssets();
         const mastersD = getInitialMasterDebts();
 
@@ -388,7 +648,8 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
             return {
               id: a.id || a.linkedAssetId || `asset-${Date.now()}`,
               name: a.assetNameSnapshot || a.name || masterMatch?.name || '자산',
-              category: a.assetTypeSnapshot || a.category || masterMatch?.category || '기타자산',
+              category: a.category || '금융자산',
+              subType: a.subType || '',
               refValue: masterMatch ? masterMatch.refValue : 0,
               value: Number(a.value) || 0,
               memo: a.memo || '',
@@ -403,12 +664,41 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
         if (Array.isArray(snap.debts) && snap.debts.length > 0) {
           const restoredDebts: DebtItemState[] = snap.debts.map((d: any) => {
             const masterMatch = mastersD.find((md) => md.id === (d.linkedDebtId || d.id));
+            const rate =
+              masterMatch?.interestRate !== undefined && masterMatch?.interestRate !== null
+                ? Number(masterMatch.interestRate)
+                : d.interestRate !== undefined && d.interestRate !== null
+                ? Number(d.interestRate)
+                : undefined;
+
+            const rep =
+              masterMatch?.repaymentMethod ||
+              d.repaymentMethod ||
+              d.debtTypeSnapshot ||
+              undefined;
+
+            const day =
+              masterMatch?.paymentDay !== undefined && masterMatch?.paymentDay !== null
+                ? Number(masterMatch.paymentDay)
+                : d.paymentDay !== undefined && d.paymentDay !== null
+                ? Number(d.paymentDay)
+                : undefined;
+
+            const creditor =
+              masterMatch?.creditor ||
+              d.creditorNameSnapshot ||
+              d.creditor ||
+              undefined;
+
             return {
               id: d.id || d.linkedDebtId || `debt-${Date.now()}`,
               name: d.debtNameSnapshot || d.name || masterMatch?.name || '부채',
-              creditor: d.creditorNameSnapshot || d.creditor || masterMatch?.creditor || '개인/금융',
+              creditor,
               refPrincipal: masterMatch ? masterMatch.refPrincipal : 0,
               openingPrincipal: Number(d.openingPrincipal) || 0,
+              interestRate: rate,
+              repaymentMethod: rep,
+              paymentDay: day,
               scheduledPrincipalRepayment: Number(d.scheduledPrincipalRepayment) || 0,
               memo: d.memo || '',
               showMemo: Boolean(d.memo),
@@ -500,11 +790,9 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
   };
 
   const handleFirstConfirmClick = () => {
-    console.log('[OpeningSnapshot] first confirm button clicked');
     setDiagnosticStep('1. 확정 버튼 클릭 감지');
 
     if (saveFeedback !== 'idle' || confirmFeedback !== 'idle' || isConfirmed) {
-      console.warn('[OpeningSnapshot] Click ignored due to feedback/confirmed state:', { saveFeedback, confirmFeedback, isConfirmed });
       return;
     }
 
@@ -521,10 +809,9 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
 
       setDiagnosticStep('2. payload 생성 및 사전 검증 중');
 
-      // Pre-validate draft creation
       const draft = SnapshotService.prepareOpeningSnapshotDraft(payload);
       const formIncludedDebtsCount = debtItems.filter((d) => d.isIncluded !== false).length;
-      
+
       if (formIncludedDebtsCount !== draft.debts.length) {
         throw new Error(`부채 저장 개수가 일치하지 않습니다\n화면 포함 부채 ${formIncludedDebtsCount}건 / 저장 대상 부채 ${draft.debts.length}건`);
       }
@@ -540,7 +827,6 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
   };
 
   const handleFinalConfirm = () => {
-    console.log('[OpeningSnapshot] handleFinalConfirm triggered');
     setDiagnosticStep('4. 최종 확정 클릭');
     setConfirmFeedback('confirming');
 
@@ -558,7 +844,6 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
       const formTotalDebts = debtItems.length;
       const formIncludedDebts = debtItems.filter((d) => d.isIncluded !== false).length;
 
-      // 1. Prepare draft and verify count
       const draft = SnapshotService.prepareOpeningSnapshotDraft(payload);
       const draftDebtsCount = draft.debts.length;
 
@@ -566,49 +851,15 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
         throw new Error(`부채 저장 개수가 일치하지 않습니다\n화면 포함 부채 ${formIncludedDebts}건 / 저장 대상 부채 ${draftDebtsCount}건`);
       }
 
-      // 2. Save draft to store
       GlobalMockDataStore.saveOpeningSnapshotDraft(draft);
       setDiagnosticStep('5. Draft 저장 완료');
 
-      // 3. Confirm opening snapshot draft in DataStore
       setDiagnosticStep('6. DataStore 확정 호출');
       const result = GlobalMockDataStore.confirmOpeningSnapshotDraft(yearMonthStr);
 
-      // 4. Strict validation on Confirmed return object
       if (!result || result.status !== 'confirmed') {
         throw new Error('확정 처리 결과가 올바르지 않습니다 (status != confirmed).');
       }
-
-      if (result.debts.length !== formIncludedDebts) {
-        throw new Error(`Confirmed 부채 수 불일치 (요청: ${formIncludedDebts}건, Confirmed: ${result.debts.length}건)`);
-      }
-
-      const confirmedDebtsSum = Math.round(
-        result.debts.reduce((sum, d) => sum + (Number(d.openingPrincipal) || 0), 0)
-      );
-
-      if (Math.round(result.totalDebts) !== confirmedDebtsSum) {
-        throw new Error(`Confirmed totalDebts(${result.totalDebts})와 부채 원금 합계(${confirmedDebtsSum}) 불일치`);
-      }
-
-      // Verify '재호' presence if included in form
-      const jaehoIncluded = debtItems.some((d) => (d.name || '').includes('재호') && d.isIncluded !== false);
-      if (jaehoIncluded && !result.debts.some((d) => (d.debtNameSnapshot || '').includes('재호'))) {
-        throw new Error('Confirmed 부채 항목에서 "재호" 부채가 누락되었습니다.');
-      }
-
-      // Verify '광주엄니' presence if included in form
-      const gwangjuIncluded = debtItems.some((d) => (d.name || '').includes('광주엄니') && d.isIncluded !== false);
-      if (gwangjuIncluded && !result.debts.some((d) => (d.debtNameSnapshot || '').includes('광주엄니'))) {
-        throw new Error('Confirmed 부채 항목에서 "광주엄니" 부채가 누락되었습니다.');
-      }
-
-      console.log('[OpeningSnapshotModal] confirm successful:', {
-        status: result.status,
-        assetsCount: result.assets.length,
-        debtsCount: result.debts.length,
-        totalDebts: result.totalDebts,
-      });
 
       const formattedTotalDebts = `${result.totalDebts.toLocaleString()}원`;
       setDiagnosticStep(
@@ -694,12 +945,12 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-medium text-[#444651] mb-1">기준월 (읽기전용)</label>
+                <label className="block text-xs font-medium text-[#444651] mb-1">기준월 (선택월)</label>
                 <input
                   type="text"
-                  value={yearMonthStr}
+                  value={displayMonth}
                   readOnly
-                  className="w-full px-3 py-2 bg-[#e8e8ed] border border-[#c5c5d3] rounded-lg font-mono text-xs text-[#555] cursor-not-allowed"
+                  className="w-full px-3 py-2 bg-[#e8e8ed] border border-[#c5c5d3] rounded-lg font-mono text-xs text-[#555] cursor-not-allowed font-bold"
                 />
               </div>
               <div>
@@ -753,7 +1004,7 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
                       {asset.isCustom ? (
                         <input
                           type="text"
-                          placeholder="과거 자산명 입력"
+                          placeholder="자산명 입력 (예: 삼성전자 주식)"
                           value={asset.name}
                           disabled={isReadOnly}
                           readOnly={isReadOnly}
@@ -766,43 +1017,63 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
                         <div>
                           <div className="flex items-center gap-1.5">
                             <span className="font-semibold text-[#1b1b1f]">{asset.name}</span>
-                            <span className="text-[10px] px-1.5 py-0.2 bg-[#f2f4f6] text-[#444651] rounded-xs border border-[#c5c5d3]/40">
-                              {asset.category}
-                            </span>
                           </div>
-                          {/* 읽기전용 현재 참고금액 */}
                           {asset.refValue > 0 && (
                             <span className="text-[11px] text-gray-400 block mt-0.5">
-                              현재 참고금액: {formatKoreanWon(asset.refValue)} ({asset.refValue.toLocaleString()}원)
+                              {isInheritedFromPrevMonth ? '전월 확정금액: ' : '기본정보 참고금액: '}
+                              {formatKoreanWon(asset.refValue)}
                             </span>
                           )}
                         </div>
                       )}
                     </div>
 
-                    {/* 유형 (Custom일 경우 수정가능) */}
-                    <div className="sm:col-span-2">
-                      {asset.isCustom ? (
-                        <input
-                          type="text"
-                          placeholder="유형 (예: 부동산/주식)"
+                    {/* 대분류 (Category) & 세부종류 Select */}
+                    <div className="sm:col-span-4 grid grid-cols-2 gap-1.5">
+                      <div>
+                        <label className="block text-[10px] text-[#757782] mb-0.5">대분류</label>
+                        <select
                           value={asset.category}
                           disabled={isReadOnly}
-                          readOnly={isReadOnly}
-                          onChange={(e) => handleAssetChange(asset.id, 'category', e.target.value)}
-                          className={`w-full px-2 py-1 border border-[#c5c5d3] rounded-md text-xs ${
+                          onChange={(e) => {
+                            const newCat = e.target.value;
+                            const defaultSub = ASSET_SUBTYPES[newCat]?.[0] || '기타';
+                            handleAssetChange(asset.id, 'category', newCat);
+                            handleAssetChange(asset.id, 'subType', defaultSub);
+                          }}
+                          className={`w-full px-2 py-1 border border-[#c5c5d3] rounded-md text-xs font-medium ${
                             isReadOnly ? 'bg-[#f2f4f6] text-[#1b1b1f] cursor-not-allowed' : 'bg-white'
                           }`}
-                        />
-                      ) : (
-                        <span className="text-[11px] text-[#757782] block text-center sm:text-left">
-                          {asset.category}
-                        </span>
-                      )}
+                        >
+                          {ASSET_CATEGORIES.map((cat) => (
+                            <option key={cat} value={cat}>
+                              {cat}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] text-[#757782] mb-0.5">세부종류</label>
+                        <select
+                          value={asset.subType || ASSET_SUBTYPES[asset.category]?.[0] || '기타'}
+                          disabled={isReadOnly}
+                          onChange={(e) => handleAssetChange(asset.id, 'subType', e.target.value)}
+                          className={`w-full px-2 py-1 border border-[#c5c5d3] rounded-md text-xs font-medium ${
+                            isReadOnly ? 'bg-[#f2f4f6] text-[#1b1b1f] cursor-not-allowed' : 'bg-white'
+                          }`}
+                        >
+                          {(ASSET_SUBTYPES[asset.category] || ['기타']).map((sub) => (
+                            <option key={sub} value={sub}>
+                              {sub}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
 
                     {/* 시작 금액 입력 */}
-                    <div className="sm:col-span-4">
+                    <div className="sm:col-span-3">
                       <label className="block text-[10px] text-[#757782] mb-0.5">
                         {displayMonth} 당시 금액 (만원)
                       </label>
@@ -831,17 +1102,17 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
                     </div>
 
                     {/* 메모 토글 및 삭제 */}
-                    <div className="sm:col-span-2 flex items-center justify-end gap-1.5">
+                    <div className="sm:col-span-1 flex items-center justify-end gap-1">
                       <button
                         type="button"
                         onClick={() => handleAssetChange(asset.id, 'showMemo', !asset.showMemo)}
-                        className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors cursor-pointer ${
+                        className={`text-[10px] px-1.5 py-0.5 rounded-md border transition-colors cursor-pointer ${
                           asset.memo
                             ? 'bg-blue-50 text-blue-700 border-blue-200'
                             : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
                         }`}
                       >
-                        {asset.showMemo ? '메모 닫기' : asset.memo ? '메모있음' : '+ 메모'}
+                        {asset.showMemo ? '닫기' : asset.memo ? '메모' : '+메모'}
                       </button>
                       {!isReadOnly && asset.isCustom && (
                         <button
@@ -876,7 +1147,7 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
               ))}
             </div>
 
-            {/* 섹션4: 과거에만 존재했던 자산 추가 버튼 */}
+            {/* 자산 추가 버튼 */}
             {!isReadOnly && (
               <div className="pt-1 space-y-1">
                 <button
@@ -885,197 +1156,309 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
                   className="w-full py-2.5 border-2 border-dashed border-[#00236f]/30 hover:border-[#00236f] bg-[#00236f]/5 hover:bg-[#00236f]/10 text-[#00236f] font-dohyeon rounded-xl text-xs flex items-center justify-center gap-1 transition-all cursor-pointer"
                 >
                   <span className="material-symbols-outlined text-sm">add_circle</span>
-                  + 과거에만 존재했던 자산 추가
+                  + {displayMonth} 자산 항목 추가
                 </button>
                 <p className="text-[11px] text-gray-400 text-center">
-                  현재는 보유하지 않지만 기준월에는 존재했던 항목을 입력합니다.
+                  해당 월에 존재했던 신규/과거 자산 항목을 추가합니다.
                 </p>
               </div>
             )}
           </div>
 
-          {/* 섹션3: 부채 시작잔액 */}
+          {/* 섹션3: 부채 시작잔액 및 조건 */}
           <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">
               <h3 className="font-dohyeon text-sm text-[#00236f] flex items-center gap-1.5">
                 <span className="material-symbols-outlined text-base">credit_card</span>
-                섹션 3. 부채 시작잔액
+                섹션 3. 부채 시작잔액 및 조건
               </h3>
               <span className="text-[11px] text-[#757782]">
-                {isReadOnly ? '확정된 스냅샷 항목입니다' : '체크 해제 시 스냅샷에서 제외됩니다'}
+                {isReadOnly ? '확정된 스냅샷 항목입니다' : '월별로 원금, 금리, 상환방식을 개별 조정할 수 있습니다'}
               </span>
             </div>
 
-            <div className="space-y-2.5">
-              {debtItems.map((debt) => (
-                <div
-                  key={debt.id}
-                  className={`p-3.5 rounded-xl border transition-all ${
-                    debt.isIncluded
-                      ? 'bg-white border-[#c5c5d3]/50 shadow-2xs'
-                      : 'bg-[#f8f9fc] border-[#e1e2ec] opacity-60'
-                  }`}
-                >
-                  <div className="space-y-2.5">
-                    {/* 상단 라인: 포함체크, 부채명, 채권자(읽기전용 또는 추가부채용) */}
-                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
-                      <div className="sm:col-span-7 flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={debt.isIncluded}
-                          disabled={isReadOnly}
-                          onChange={(e) => handleDebtChange(debt.id, 'isIncluded', e.target.checked)}
-                          className="w-4 h-4 rounded-xs text-[#00236f] focus:ring-[#00236f] cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
-                        />
-                        {debt.isCustom ? (
+            <div className="space-y-3">
+              {debtItems.map((debt) => {
+                const monthlyInt = calculateMonthlyInterest(debt.openingPrincipal, debt.interestRate);
+
+                return (
+                  <div
+                    key={debt.id}
+                    className={`p-3.5 rounded-xl border transition-all ${
+                      debt.isIncluded
+                        ? 'bg-white border-[#c5c5d3]/50 shadow-2xs'
+                        : 'bg-[#f8f9fc] border-[#e1e2ec] opacity-60'
+                    }`}
+                  >
+                    <div className="space-y-2.5">
+                      {/* 상단 라인: 포함체크, 부채명, 채권자 */}
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                        <div className="sm:col-span-7 flex items-center gap-2">
                           <input
-                            type="text"
-                            placeholder="과거 부채명 (예: 어머니 차입금)"
-                            value={debt.name}
+                            type="checkbox"
+                            checked={debt.isIncluded}
                             disabled={isReadOnly}
-                            readOnly={isReadOnly}
-                            onChange={(e) => handleDebtChange(debt.id, 'name', e.target.value)}
+                            onChange={(e) => handleDebtChange(debt.id, 'isIncluded', e.target.checked)}
+                            className="w-4 h-4 rounded-xs text-[#00236f] focus:ring-[#00236f] cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+                          />
+                          {debt.isCustom ? (
+                            <input
+                              type="text"
+                              placeholder="부채명 (예: 어머니 차입금)"
+                              value={debt.name}
+                              disabled={isReadOnly}
+                              readOnly={isReadOnly}
+                              onChange={(e) => handleDebtChange(debt.id, 'name', e.target.value)}
+                              className={`w-full px-2 py-1 border border-[#c5c5d3] rounded-md text-xs font-medium ${
+                                isReadOnly ? 'bg-[#f2f4f6] text-[#1b1b1f] cursor-not-allowed' : 'bg-white'
+                              }`}
+                            />
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-[#1b1b1f] text-sm">{debt.name}</span>
+                              <span className="text-[10px] px-2 py-0.5 bg-[#f2f4f6] text-[#444651] rounded-md border border-[#c5c5d3]/40">
+                                {debt.creditor}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="sm:col-span-5 flex items-center justify-end gap-2">
+                          {debt.isCustom && (
+                            <input
+                              type="text"
+                              placeholder="채권자/금융기관"
+                              value={debt.creditor}
+                              disabled={isReadOnly}
+                              readOnly={isReadOnly}
+                              onChange={(e) => handleDebtChange(debt.id, 'creditor', e.target.value)}
+                              className={`w-32 px-2 py-1 border border-[#c5c5d3] rounded-md text-xs ${
+                                isReadOnly ? 'bg-[#f2f4f6] text-[#1b1b1f] cursor-not-allowed' : 'bg-white'
+                              }`}
+                            />
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleDebtChange(debt.id, 'showMemo', !debt.showMemo)}
+                            className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors cursor-pointer ${
+                              debt.memo
+                                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                            }`}
+                          >
+                            {debt.showMemo ? '메모 닫기' : debt.memo ? '메모있음' : '+ 메모'}
+                          </button>
+                          {!isReadOnly && debt.isCustom && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveDebt(debt.id)}
+                              className="p-1 text-red-500 hover:bg-red-50 rounded-xs transition-colors cursor-pointer ml-1"
+                              title="삭제"
+                            >
+                              <span className="material-symbols-outlined text-base">delete</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 하단 라인 1: 원금 잔액 & 연이율 */}
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center bg-[#f8f9fc] p-2.5 rounded-lg border border-[#e1e2ec]/60">
+                        {/* 원금잔액 */}
+                        <div className="sm:col-span-6">
+                          <div className="flex items-center justify-between mb-0.5">
+                            <label className="block text-[10px] font-medium text-[#444651]">
+                              {displayMonth} 원금잔액 (만원)
+                            </label>
+                            {debt.refPrincipal > 0 && (
+                              <span className="text-[10px] text-gray-400">
+                                {isInheritedFromPrevMonth ? '전월 확정: ' : '기본정보 참고: '}
+                                {formatKoreanWon(debt.refPrincipal)}
+                              </span>
+                            )}
+                          </div>
+                          <div className="relative">
+                            <input
+                              type="text"
+                              value={formatManInputValue(wonToMan(debt.openingPrincipal))}
+                              disabled={isReadOnly}
+                              readOnly={isReadOnly}
+                              onChange={(e) => {
+                                const manNum = parseManInputValue(e.target.value);
+                                handleDebtChange(debt.id, 'openingPrincipal', manToWon(manNum));
+                              }}
+                              placeholder="0"
+                              className={`w-full pl-2 pr-10 py-1 border border-[#c5c5d3] rounded-md text-right font-mono text-xs ${
+                                isReadOnly ? 'bg-[#f2f4f6] text-[#1b1b1f] cursor-not-allowed' : 'bg-white focus:border-[#00236f]'
+                              }`}
+                            />
+                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#757782] font-semibold">
+                              만원
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-[#00236f] mt-0.5 text-right font-medium">
+                            {formatKoreanAmountFromMan(wonToMan(debt.openingPrincipal))}
+                          </p>
+                        </div>
+
+                        {/* 연이율 (%) 및 월 이자 표시 */}
+                        <div className="sm:col-span-6">
+                          <div className="flex items-center justify-between mb-0.5">
+                            <label className="block text-[10px] font-medium text-[#444651]">
+                              연이율 (%)
+                              {debt.interestRate !== undefined && debt.interestRate !== null && (
+                                <span className="text-[10px] text-gray-400 font-normal ml-1">
+                                  ({isInheritedFromPrevMonth ? '전월 확정: ' : '기본정보 참고: '}{debt.interestRate}%)
+                                </span>
+                              )}
+                            </label>
+                            <span className="text-[10px] text-red-600 font-semibold">
+                              월 이자 약 {formatKoreanWon(monthlyInt)}
+                            </span>
+                          </div>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              max="100"
+                              value={debt.interestRate !== undefined && debt.interestRate !== null ? debt.interestRate : ''}
+                              disabled={isReadOnly}
+                              readOnly={isReadOnly}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                const rate = val === '' ? undefined : parseFloat(val);
+                                handleDebtChange(debt.id, 'interestRate', rate);
+                              }}
+                              placeholder="미입력"
+                              className={`w-full pl-2 pr-8 py-1 border border-[#c5c5d3] rounded-md text-right font-mono text-xs ${
+                                isReadOnly ? 'bg-[#f2f4f6] text-[#1b1b1f] cursor-not-allowed' : 'bg-white focus:border-[#00236f]'
+                              }`}
+                            />
+                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#757782] font-semibold">
+                              %
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-[#757782] mt-0.5 text-right">
+                            {debt.interestRate !== undefined && debt.interestRate !== null
+                              ? debt.interestRate > 0
+                                ? `연 ${debt.interestRate}% 적용`
+                                : '무이자 (0%)'
+                              : '미입력 (기본값 없음)'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* 하단 라인 2: 상환방식, 납부일, 월 예정 원금상환 */}
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center bg-[#f8f9fc] p-2.5 rounded-lg border border-[#e1e2ec]/60">
+                        {/* 상환방식 */}
+                        <div className="sm:col-span-4">
+                          <label className="block text-[10px] font-medium text-[#444651] mb-0.5">
+                            상환방식
+                          </label>
+                          <select
+                            value={debt.repaymentMethod || ''}
+                            disabled={isReadOnly}
+                            onChange={(e) => handleDebtChange(debt.id, 'repaymentMethod', e.target.value || undefined)}
                             className={`w-full px-2 py-1 border border-[#c5c5d3] rounded-md text-xs font-medium ${
                               isReadOnly ? 'bg-[#f2f4f6] text-[#1b1b1f] cursor-not-allowed' : 'bg-white'
                             }`}
-                          />
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-[#1b1b1f]">{debt.name}</span>
-                            {/* 읽기전용 채권자 표시 */}
-                            <span className="text-[10px] px-2 py-0.5 bg-[#f2f4f6] text-[#444651] rounded-md border border-[#c5c5d3]/40">
-                              {debt.creditor}
+                          >
+                            <option value="" disabled>
+                              선택 필요 (미입력)
+                            </option>
+                            {REPAYMENT_METHODS.map((m) => (
+                              <option key={m} value={m}>
+                                {m}
+                              </option>
+                            ))}
+                            {debt.repaymentMethod && !REPAYMENT_METHODS.includes(debt.repaymentMethod as any) && (
+                              <option value={debt.repaymentMethod}>{debt.repaymentMethod}</option>
+                            )}
+                          </select>
+                        </div>
+
+                        {/* 월 납부일 */}
+                        <div className="sm:col-span-3">
+                          <label className="block text-[10px] font-medium text-[#444651] mb-0.5">
+                            월 납부일
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min="1"
+                              max="31"
+                              value={debt.paymentDay ?? ''}
+                              disabled={isReadOnly}
+                              readOnly={isReadOnly}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                const day = val === '' ? undefined : parseInt(val, 10);
+                                handleDebtChange(debt.id, 'paymentDay', day);
+                              }}
+                              placeholder="미입력"
+                              className={`w-full pl-2 pr-6 py-1 border border-[#c5c5d3] rounded-md text-right font-mono text-xs ${
+                                isReadOnly ? 'bg-[#f2f4f6] text-[#1b1b1f] cursor-not-allowed' : 'bg-white focus:border-[#00236f]'
+                              }`}
+                            />
+                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#757782] font-semibold">
+                              일
                             </span>
                           </div>
-                        )}
-                      </div>
+                        </div>
 
-                      <div className="sm:col-span-5 flex items-center justify-end gap-2">
-                        {debt.isCustom && (
-                          <input
-                            type="text"
-                            placeholder="채권자/지인명"
-                            value={debt.creditor}
-                            disabled={isReadOnly}
-                            readOnly={isReadOnly}
-                            onChange={(e) => handleDebtChange(debt.id, 'creditor', e.target.value)}
-                            className={`w-32 px-2 py-1 border border-[#c5c5d3] rounded-md text-xs ${
-                              isReadOnly ? 'bg-[#f2f4f6] text-[#1b1b1f] cursor-not-allowed' : 'bg-white'
-                            }`}
-                          />
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => handleDebtChange(debt.id, 'showMemo', !debt.showMemo)}
-                          className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors cursor-pointer ${
-                            debt.memo
-                              ? 'bg-blue-50 text-blue-700 border-blue-200'
-                              : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
-                          }`}
-                        >
-                          {debt.showMemo ? '메모 닫기' : debt.memo ? '메모있음' : '+ 메모'}
-                        </button>
-                        {!isReadOnly && debt.isCustom && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveDebt(debt.id)}
-                            className="p-1 text-red-500 hover:bg-red-50 rounded-xs transition-colors cursor-pointer ml-1"
-                            title="삭제"
-                          >
-                            <span className="material-symbols-outlined text-base">delete</span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* 하단 라인: 원금 잔액, 월 예정 원금상환 */}
-                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center bg-[#f8f9fc] p-2.5 rounded-lg border border-[#e1e2ec]/60">
-                      <div className="sm:col-span-6">
-                        <div className="flex items-center justify-between mb-0.5">
-                          <label className="block text-[10px] font-medium text-[#444651]">
-                            기준일 당시 원금잔액 (만원)
+                        {/* 월 예정 원금상환액 */}
+                        <div className="sm:col-span-5">
+                          <label className="block text-[10px] font-medium text-[#444651] mb-0.5">
+                            월 예정 원금상환액 (만원)
                           </label>
-                          {debt.refPrincipal > 0 && (
-                            <span className="text-[10px] text-gray-400">
-                              현재 참고: {formatKoreanWon(debt.refPrincipal)}
+                          <div className="relative">
+                            <input
+                              type="text"
+                              value={formatManInputValue(wonToMan(debt.scheduledPrincipalRepayment))}
+                              disabled={isReadOnly}
+                              readOnly={isReadOnly}
+                              onChange={(e) => {
+                                const manNum = parseManInputValue(e.target.value);
+                                handleDebtChange(debt.id, 'scheduledPrincipalRepayment', manToWon(manNum));
+                              }}
+                              placeholder="0"
+                              className={`w-full pl-2 pr-10 py-1 border border-[#c5c5d3] rounded-md text-right font-mono text-xs ${
+                                isReadOnly ? 'bg-[#f2f4f6] text-[#1b1b1f] cursor-not-allowed' : 'bg-white focus:border-[#00236f]'
+                              }`}
+                            />
+                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#757782] font-semibold">
+                              만원
                             </span>
-                          )}
+                          </div>
+                          <p className="text-[11px] text-[#00236f] mt-0.5 text-right font-medium">
+                            {formatKoreanAmountFromMan(wonToMan(debt.scheduledPrincipalRepayment))}
+                          </p>
                         </div>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            value={formatManInputValue(wonToMan(debt.openingPrincipal))}
-                            disabled={isReadOnly}
-                            readOnly={isReadOnly}
-                            onChange={(e) => {
-                              const manNum = parseManInputValue(e.target.value);
-                              handleDebtChange(debt.id, 'openingPrincipal', manToWon(manNum));
-                            }}
-                            placeholder="0"
-                            className={`w-full pl-2 pr-10 py-1 border border-[#c5c5d3] rounded-md text-right font-mono text-xs ${
-                              isReadOnly ? 'bg-[#f2f4f6] text-[#1b1b1f] cursor-not-allowed' : 'bg-white focus:border-[#00236f]'
-                            }`}
-                          />
-                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#757782] font-semibold">
-                            만원
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-[#00236f] mt-0.5 text-right font-medium">
-                          {formatKoreanAmountFromMan(wonToMan(debt.openingPrincipal))}
-                        </p>
                       </div>
 
-                      <div className="sm:col-span-6">
-                        <label className="block text-[10px] font-medium text-[#444651] mb-0.5">
-                          월 예정 원금상환액 (만원)
-                        </label>
-                        <div className="relative">
+                      {/* 접힘 메모 영역 */}
+                      {debt.showMemo && (
+                        <div className="pt-1">
                           <input
                             type="text"
-                            value={formatManInputValue(wonToMan(debt.scheduledPrincipalRepayment))}
+                            placeholder="부채 관련 메모를 입력하세요"
+                            value={debt.memo}
                             disabled={isReadOnly}
                             readOnly={isReadOnly}
-                            onChange={(e) => {
-                              const manNum = parseManInputValue(e.target.value);
-                              handleDebtChange(debt.id, 'scheduledPrincipalRepayment', manToWon(manNum));
-                            }}
-                            placeholder="0"
-                            className={`w-full pl-2 pr-10 py-1 border border-[#c5c5d3] rounded-md text-right font-mono text-xs ${
-                              isReadOnly ? 'bg-[#f2f4f6] text-[#1b1b1f] cursor-not-allowed' : 'bg-white focus:border-[#00236f]'
+                            onChange={(e) => handleDebtChange(debt.id, 'memo', e.target.value)}
+                            className={`w-full px-2.5 py-1 border border-[#c5c5d3]/60 rounded-md text-xs ${
+                              isReadOnly ? 'bg-[#f2f4f6] text-[#1b1b1f] cursor-not-allowed' : 'bg-[#f8f9fc]'
                             }`}
                           />
-                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#757782] font-semibold">
-                            만원
-                          </span>
                         </div>
-                        <p className="text-[11px] text-[#00236f] mt-0.5 text-right font-medium">
-                          {formatKoreanAmountFromMan(wonToMan(debt.scheduledPrincipalRepayment))}
-                        </p>
-                      </div>
+                      )}
                     </div>
-
-                    {/* 접힘 메모 영역 */}
-                    {debt.showMemo && (
-                      <div className="pt-1">
-                        <input
-                          type="text"
-                          placeholder="부채 관련 메모를 입력하세요"
-                          value={debt.memo}
-                          disabled={isReadOnly}
-                          readOnly={isReadOnly}
-                          onChange={(e) => handleDebtChange(debt.id, 'memo', e.target.value)}
-                          className={`w-full px-2.5 py-1 border border-[#c5c5d3]/60 rounded-md text-xs ${
-                            isReadOnly ? 'bg-[#f2f4f6] text-[#1b1b1f] cursor-not-allowed' : 'bg-[#f8f9fc]'
-                          }`}
-                        />
-                      </div>
-                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
-            {/* 섹션5: 과거에만 존재했던 부채 추가 버튼 */}
+            {/* 부채 추가 버튼 */}
             {!isReadOnly && (
               <div className="pt-1 space-y-1">
                 <button
@@ -1084,16 +1467,16 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
                   className="w-full py-2.5 border-2 border-dashed border-[#00236f]/30 hover:border-[#00236f] bg-[#00236f]/5 hover:bg-[#00236f]/10 text-[#00236f] font-dohyeon rounded-xl text-xs flex items-center justify-center gap-1 transition-all cursor-pointer"
                 >
                   <span className="material-symbols-outlined text-sm">add_circle</span>
-                  + 과거에만 존재했던 부채 추가
+                  + {displayMonth} 부채 항목 추가
                 </button>
                 <p className="text-[11px] text-gray-400 text-center">
-                  현재는 보유하지 않지만 기준월에는 존재했던 항목을 입력합니다.
+                  해당 월에 존재했던 신규/지인 차입금 등 부채 항목을 추가합니다.
                 </p>
               </div>
             )}
           </div>
 
-          {/* 섹션6: 실시간 요약 카드 */}
+          {/* 섹션4: 실시간 요약 카드 */}
           <div className="bg-[#f2f4f6] p-4 rounded-xl border border-[#00236f]/20 shadow-2xs space-y-2">
             <h4 className="font-dohyeon text-xs text-[#00236f] flex items-center gap-1">
               <span className="material-symbols-outlined text-sm">calculate</span>
@@ -1130,7 +1513,7 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
         <div className="px-6 py-4 bg-[#f8f9fc] border-t border-[#e1e2ec] flex flex-col gap-2">
           {/* Diagnostic Status Banner */}
           <div className="text-xs font-mono font-bold text-[#00236f] bg-blue-50/90 border border-blue-200/80 px-3 py-2 rounded-xl flex items-center justify-between flex-wrap gap-2">
-            <span>폼 {debtItems.length}건 | 포함 {debtItems.filter(d => d.isIncluded !== false).length}건</span>
+            <span>자산 {assetItems.length}건 | 부채 {debtItems.length}건 (포함 {debtItems.filter(d => d.isIncluded !== false).length}건)</span>
             <span>진단: {diagnosticStep}</span>
           </div>
 

@@ -76,6 +76,121 @@ export const formatMonthKorean = (monthKey: string): string => {
   return monthKey;
 };
 
+export function getPreviousMonthKey(monthKey: string): string {
+  const norm = normalizeMonthKey(monthKey);
+  const parts = norm.split('-');
+  let y = parseInt(parts[0], 10) || 2026;
+  let m = parseInt(parts[1], 10) || 4;
+  if (m === 1) {
+    y -= 1;
+    m = 12;
+  } else {
+    m -= 1;
+  }
+  return `${y}-${String(m).padStart(2, '0')}`;
+}
+
+export const normalizeDebtName = (s?: string | null) =>
+  s ? String(s).replace(/^\[|\]$/g, '').replace(/\s+/g, ' ').trim().toLowerCase() : '';
+
+export const parsePaymentDay = (val: any): number | undefined => {
+  if (val === undefined || val === null) return undefined;
+  if (typeof val === 'number') return isNaN(val) ? undefined : val;
+  const str = String(val).replace(/[^0-9]/g, '');
+  const parsed = parseInt(str, 10);
+  return isNaN(parsed) ? undefined : parsed;
+};
+
+export function getAllMasterDebts(customMasterDebts?: any): any[] {
+  const debtsData = customMasterDebts || GlobalMockDataStore.getDebts();
+  if (Array.isArray(debtsData)) {
+    return debtsData;
+  }
+  if (!debtsData) return [];
+  const ob = Array.isArray((debtsData as any).onboardingDebts) ? (debtsData as any).onboardingDebts : [];
+  const main = Array.isArray((debtsData as any).mainDebts) ? (debtsData as any).mainDebts : [];
+  if (ob.length > 0 && main.length > 0) {
+    const obIds = new Set(ob.map((x: any) => x.id));
+    return [...ob, ...main.filter((x: any) => !obIds.has(x.id))];
+  } else if (ob.length > 0) {
+    return ob;
+  } else {
+    return main;
+  }
+}
+
+export function findMatchingMasterDebt(snapshotDebt: any, masterDebts: any[]): any | undefined {
+  const dNameNorm = normalizeDebtName(snapshotDebt.debtNameSnapshot || snapshotDebt.name || snapshotDebt.debtName);
+  return masterDebts.find((m: any) => {
+    if (snapshotDebt.linkedDebtId && m.id === snapshotDebt.linkedDebtId) return true;
+    if (snapshotDebt.debtId && m.id === snapshotDebt.debtId) return true;
+    if (snapshotDebt.id && m.id === snapshotDebt.id) return true;
+    const mNameNorm = normalizeDebtName(m.debtName || m.name);
+    return (
+      dNameNorm &&
+      mNameNorm &&
+      (dNameNorm === mNameNorm || dNameNorm.includes(mNameNorm) || mNameNorm.includes(dNameNorm))
+    );
+  });
+}
+
+export const enrichDebtSnapshot = (d: DebtSnapshot): DebtSnapshot => {
+  const masters = getAllMasterDebts();
+  const master = findMatchingMasterDebt(d, masters);
+
+  const masterRate =
+    master?.interestRate !== undefined && master?.interestRate !== null
+      ? Number(master.interestRate)
+      : master?.annualRate !== undefined && master?.annualRate !== null
+      ? Number(master.annualRate)
+      : master?.rate !== undefined && master?.rate !== null
+      ? Number(master.rate)
+      : master?.currentRate !== undefined && master?.currentRate !== null
+      ? Number(master.currentRate)
+      : undefined;
+
+  const snapshotRate = d.interestRate !== undefined && d.interestRate !== null ? Number(d.interestRate) : undefined;
+  const interestRate = masterRate !== undefined ? masterRate : snapshotRate;
+
+  const masterRepayment =
+    master?.repaymentMethod ||
+    master?.repaymentType ||
+    master?.paymentType ||
+    master?.rateType ||
+    master?.amortizationType ||
+    master?.method;
+
+  const repaymentMethod =
+    masterRepayment ||
+    d.repaymentMethod ||
+    d.debtTypeSnapshot ||
+    undefined;
+
+  const masterDay = master
+    ? parsePaymentDay(
+        master.paymentDay ??
+          master.dueDay ??
+          master.monthlyPaymentDay ??
+          master.interestPaymentDay ??
+          master.repaymentDay ??
+          master.nextDueDate
+      )
+    : undefined;
+
+  const paymentDay = masterDay !== undefined ? masterDay : parsePaymentDay(d.paymentDay);
+
+  const masterCreditor = master?.creditorName || master?.creditor || master?.lender;
+  const creditorNameSnapshot = masterCreditor || d.creditorNameSnapshot || undefined;
+
+  return {
+    ...d,
+    interestRate,
+    repaymentMethod: repaymentMethod || d.repaymentMethod,
+    paymentDay: paymentDay !== undefined ? paymentDay : d.paymentDay,
+    creditorNameSnapshot: creditorNameSnapshot || d.creditorNameSnapshot,
+  };
+};
+
 // Initial state loader
 const loadSnapshotStore = (): SnapshotStoreState => {
   try {
@@ -212,6 +327,9 @@ const loadSnapshotStore = (): SnapshotStoreState => {
           additionalBorrowing: 0,
           endingPrincipal: 1250000000,
           interestExpense: 5000000,
+          interestRate: 3.9,
+          repaymentMethod: '원리금상환',
+          paymentDay: 25,
           statusAtMonthEnd: 'active',
           source: 'opening-seed',
           isHistoricalOnly: false,
@@ -234,6 +352,9 @@ const loadSnapshotStore = (): SnapshotStoreState => {
           additionalBorrowing: 0,
           endingPrincipal: 450000000,
           interestExpense: 2062500,
+          interestRate: 5.5,
+          repaymentMethod: '원리금상환',
+          paymentDay: 10,
           statusAtMonthEnd: 'active',
           source: 'opening-seed',
           isHistoricalOnly: false,
@@ -256,6 +377,9 @@ const loadSnapshotStore = (): SnapshotStoreState => {
           additionalBorrowing: 0,
           endingPrincipal: 225000000,
           interestExpense: 1125000,
+          interestRate: 6.0,
+          repaymentMethod: '원리금상환',
+          paymentDay: 15,
           statusAtMonthEnd: 'active',
           source: 'opening-seed',
           isHistoricalOnly: false,
@@ -278,6 +402,9 @@ const loadSnapshotStore = (): SnapshotStoreState => {
           additionalBorrowing: 0,
           endingPrincipal: 54920160,
           interestExpense: 269934,
+          interestRate: 5.9,
+          repaymentMethod: '원리금상환',
+          paymentDay: 20,
           statusAtMonthEnd: 'active',
           source: 'opening-seed',
           isHistoricalOnly: false,
@@ -300,6 +427,9 @@ const loadSnapshotStore = (): SnapshotStoreState => {
           additionalBorrowing: 0,
           endingPrincipal: 25000000,
           interestExpense: 0,
+          interestRate: 0,
+          repaymentMethod: '개인차입금',
+          paymentDay: 1,
           statusAtMonthEnd: 'active',
           source: 'opening-seed',
           isHistoricalOnly: true,
@@ -322,6 +452,9 @@ const loadSnapshotStore = (): SnapshotStoreState => {
           additionalBorrowing: 0,
           endingPrincipal: 50000000,
           interestExpense: 0,
+          interestRate: 0,
+          repaymentMethod: '개인차입금',
+          paymentDay: 1,
           statusAtMonthEnd: 'active',
           source: 'opening-seed',
           isHistoricalOnly: true,
@@ -344,6 +477,9 @@ const loadSnapshotStore = (): SnapshotStoreState => {
           additionalBorrowing: 0,
           endingPrincipal: 474100000,
           interestExpense: 1500000,
+          interestRate: 3.8,
+          repaymentMethod: '원리금상환',
+          paymentDay: 25,
           statusAtMonthEnd: 'active',
           source: 'opening-seed',
           isHistoricalOnly: false,
@@ -394,6 +530,7 @@ export const SnapshotService = {
       name?: string;
       assetNameSnapshot?: string;
       category?: string;
+      subType?: string;
       assetTypeSnapshot?: string;
       value?: number;
       memo?: string;
@@ -410,6 +547,9 @@ export const SnapshotService = {
       debtTypeSnapshot?: string;
       openingPrincipal?: number;
       scheduledPrincipalRepayment?: number;
+      repaymentMethod?: string;
+      interestRate?: number;
+      paymentDay?: number;
       memo?: string;
       isIncluded?: boolean;
       isCustom?: boolean;
@@ -477,7 +617,9 @@ export const SnapshotService = {
     const convertedAssets = includedAssets.map((a) => {
       const isCustom = Boolean(a.isCustom || (!a.linkedAssetId && !a.id?.startsWith('ass-') && !a.id?.startsWith('asset-')));
       const assetName = (a.name || a.assetNameSnapshot || '').trim();
-      const assetType = a.category || a.assetTypeSnapshot || '기타자산';
+      const cat = a.category || a.assetTypeSnapshot || '금융자산';
+      const sub = a.subType || '';
+      const assetType = sub ? `${cat} (${sub})` : cat;
       const val = Math.round(Number(a.value) || 0);
 
       const assetUuid = generateUuid();
@@ -492,6 +634,8 @@ export const SnapshotService = {
         linkedAssetId,
         assetNameSnapshot: assetName,
         assetTypeSnapshot: assetType,
+        category: cat,
+        subType: sub,
         value: val,
         memo: a.memo || '',
         source: 'opening-seed' as const,
@@ -505,10 +649,12 @@ export const SnapshotService = {
     const convertedDebts = includedDebts.map((d) => {
       const isCustom = Boolean(d.isCustom || (!d.linkedDebtId && !d.id?.startsWith('debt-')));
       const debtName = (d.name || d.debtNameSnapshot || '').trim();
-      const debtType = d.debtTypeSnapshot || '원리금상환';
+      const repaymentMethod = d.repaymentMethod || d.debtTypeSnapshot || '원리금상환';
       const creditor = d.creditor || d.creditorNameSnapshot || '개인/금융';
       const openingPrincipal = Math.round(Number(d.openingPrincipal) || 0);
       const scheduledPrincipalRepayment = Math.round(Number(d.scheduledPrincipalRepayment) || 0);
+      const interestRate = d.interestRate !== undefined && d.interestRate !== null ? Number(d.interestRate) : undefined;
+      const paymentDay = d.paymentDay !== undefined ? Number(d.paymentDay) : undefined;
 
       const debtUuid = generateUuid();
       const id = isCustom ? `historical-debt-${debtUuid}` : `debt-snap-${normalizedMonth}-${debtUuid}`;
@@ -521,7 +667,7 @@ export const SnapshotService = {
         debtId: linkedDebtId,
         linkedDebtId,
         debtNameSnapshot: debtName,
-        debtTypeSnapshot: debtType,
+        debtTypeSnapshot: repaymentMethod,
         creditorNameSnapshot: creditor,
         openingPrincipal,
         scheduledPrincipalRepayment,
@@ -529,6 +675,9 @@ export const SnapshotService = {
         additionalBorrowing: 0,
         endingPrincipal: openingPrincipal,
         interestExpense: 0,
+        interestRate,
+        repaymentMethod,
+        paymentDay,
         statusAtMonthEnd: openingPrincipal === 0 ? ('fully-repaid' as const) : ('active' as const),
         source: 'opening-seed' as const,
         memo: d.memo || '',
@@ -584,6 +733,11 @@ export const SnapshotService = {
       if (snap.status === 'confirmed') return 'confirmed';
       if (snap.status === 'draft') return 'draft';
     }
+    const prevMonthKey = getPreviousMonthKey(monthKey);
+    const prevSnap = state.monthlySnapshots[prevMonthKey];
+    if (prevSnap && prevSnap.status === 'confirmed') {
+      return 'draft';
+    }
     return 'none';
   },
 
@@ -601,17 +755,102 @@ export const SnapshotService = {
     if (snap && snap.source === 'opening-seed') {
       return snap;
     }
+    const prevMonthKey = getPreviousMonthKey(monthKey);
+    const prevSnap = state.monthlySnapshots[prevMonthKey];
+    if (prevSnap && prevSnap.status === 'confirmed') {
+      const assets = this.getAssetSnapshotsByMonth(monthKey);
+      const debts = this.getDebtSnapshotsByMonth(monthKey);
+      const totalAssets = assets.filter((a) => a.isIncluded !== false).reduce((s, a) => s + (Number(a.value) || 0), 0);
+      const totalDebts = debts.filter((d) => d.isIncluded !== false).reduce((s, d) => s + (Number(d.openingPrincipal) || 0), 0);
+      return {
+        id: `opening-${monthKey}-inherited`,
+        month: monthKey,
+        status: 'draft',
+        source: 'opening-seed',
+        referenceDate: `${monthKey}-01`,
+        totalAssets,
+        totalDebts,
+        netWorth: totalAssets - totalDebts,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        confirmedAt: undefined,
+        assetSnapshotIds: assets.map((a) => a.id),
+        debtSnapshotIds: debts.map((d) => d.id),
+      };
+    }
     return null;
   },
 
   getAssetSnapshotsByMonth(monthInput: string | { year: number; month: number }): AssetSnapshot[] {
     const monthKey = normalizeMonthKey(monthInput);
-    return state.assetSnapshots[monthKey] || [];
+    const assets = state.assetSnapshots[monthKey];
+    if (assets && assets.length > 0) {
+      return assets;
+    }
+    const prevMonthKey = getPreviousMonthKey(monthKey);
+    const prevSnap = state.monthlySnapshots[prevMonthKey];
+    if (prevSnap && prevSnap.status === 'confirmed') {
+      const prevAssets = state.assetSnapshots[prevMonthKey] || [];
+      return prevAssets.map((pa, idx) => ({
+        id: `ass-inherited-${monthKey}-${idx}-${Date.now()}`,
+        monthlySnapshotId: `opening-${monthKey}-inherited`,
+        month: monthKey,
+        assetId: pa.assetId || (pa as any).linkedAssetId || null,
+        linkedAssetId: (pa as any).linkedAssetId || pa.assetId || null,
+        assetNameSnapshot: pa.assetNameSnapshot,
+        assetTypeSnapshot: pa.assetTypeSnapshot,
+        category: pa.category,
+        subType: pa.subType,
+        value: Number(pa.value) || 0,
+        memo: pa.memo || '',
+        source: 'opening-seed',
+        isHistoricalOnly: pa.isHistoricalOnly,
+        isIncluded: pa.isIncluded !== false,
+        createdAt: pa.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }));
+    }
+    return [];
   },
 
   getDebtSnapshotsByMonth(monthInput: string | { year: number; month: number }): DebtSnapshot[] {
     const monthKey = normalizeMonthKey(monthInput);
-    return state.debtSnapshots[monthKey] || [];
+    const debts = state.debtSnapshots[monthKey];
+    if (debts && debts.length > 0) {
+      return debts.map(enrichDebtSnapshot);
+    }
+    const prevMonthKey = getPreviousMonthKey(monthKey);
+    const prevSnap = state.monthlySnapshots[prevMonthKey];
+    if (prevSnap && prevSnap.status === 'confirmed') {
+      const prevDebts = state.debtSnapshots[prevMonthKey] || [];
+      return prevDebts.map((pd, idx) => ({
+        id: `debt-inherited-${monthKey}-${idx}-${Date.now()}`,
+        monthlySnapshotId: `opening-${monthKey}-inherited`,
+        month: monthKey,
+        debtId: pd.debtId || pd.linkedDebtId || null,
+        linkedDebtId: pd.linkedDebtId || pd.debtId || null,
+        debtNameSnapshot: pd.debtNameSnapshot,
+        debtTypeSnapshot: pd.debtTypeSnapshot || pd.repaymentMethod || '원리금상환',
+        creditorNameSnapshot: pd.creditorNameSnapshot || '개인/금융',
+        openingPrincipal: pd.endingPrincipal !== undefined ? Number(pd.endingPrincipal) : Number(pd.openingPrincipal) || 0,
+        scheduledPrincipalRepayment: Number(pd.scheduledPrincipalRepayment) || 0,
+        actualPrincipalRepayment: 0,
+        additionalBorrowing: 0,
+        endingPrincipal: pd.endingPrincipal !== undefined ? Number(pd.endingPrincipal) : Number(pd.openingPrincipal) || 0,
+        interestExpense: 0,
+        interestRate: pd.interestRate,
+        repaymentMethod: pd.repaymentMethod || pd.debtTypeSnapshot,
+        paymentDay: pd.paymentDay || 1,
+        statusAtMonthEnd: 'active' as const,
+        source: 'opening-seed' as const,
+        memo: pd.memo || '',
+        isHistoricalOnly: pd.isHistoricalOnly,
+        isIncluded: pd.isIncluded !== false,
+        createdAt: pd.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })).map(enrichDebtSnapshot);
+    }
+    return [];
   },
 
   getMonthlyDebtMovements(monthInput: string | { year: number; month: number }): MonthlyDebtMovement[] {
@@ -785,17 +1024,17 @@ export const SnapshotService = {
     let masterDebts: any[] = [];
     if (Array.isArray(debtsData)) {
       masterDebts = debtsData;
-    } else if (debtsData?.onboardingDebts && debtsData.onboardingDebts.length > 0) {
-      masterDebts = debtsData.onboardingDebts.map((d: any) => ({
-        id: d.id,
-        name: d.debtName || d.name || '부채',
-        amount: Number(d.currentBalance) || Number(d.amount) || 0,
-        principalRepayment: Number(d.manualPrincipalPayment) || Number(d.currentPrincipalPayment) || 0,
-        interestPayment: Number(d.manualInterestPayment) || Number(d.currentInterestPayment) || 0,
-        rateType: d.rateType || '고정금리',
-      }));
-    } else if (debtsData?.mainDebts) {
-      masterDebts = debtsData.mainDebts;
+    } else if (debtsData) {
+      const ob = Array.isArray((debtsData as any).onboardingDebts) ? (debtsData as any).onboardingDebts : [];
+      const main = Array.isArray((debtsData as any).mainDebts) ? (debtsData as any).mainDebts : [];
+      if (ob.length > 0 && main.length > 0) {
+        const obIds = new Set(ob.map((x: any) => x.id));
+        masterDebts = [...ob, ...main.filter((x: any) => !obIds.has(x.id))];
+      } else if (ob.length > 0) {
+        masterDebts = ob;
+      } else {
+        masterDebts = main;
+      }
     }
 
     const refDate = referenceDate || `${monthKey}-01`;
@@ -806,7 +1045,9 @@ export const SnapshotService = {
       month: monthKey,
       assetId: ma.id,
       assetNameSnapshot: ma.name,
-      assetTypeSnapshot: ma.category,
+      assetTypeSnapshot: ma.category || ma.assetType || '금융자산',
+      category: ma.category || ma.assetType || '금융자산',
+      subType: ma.subType || '',
       value: Math.round(Number(ma.amount) || 0),
       valuationMethod: 'Master Default',
       source: 'opening-seed',
@@ -816,30 +1057,62 @@ export const SnapshotService = {
       isIncluded: true,
     }));
 
+    const parseDay = (val: any): number | undefined => {
+      if (val === undefined || val === null) return undefined;
+      if (typeof val === 'number') return isNaN(val) ? undefined : val;
+      const str = String(val).replace(/[^0-9]/g, '');
+      const parsed = parseInt(str, 10);
+      return isNaN(parsed) ? undefined : parsed;
+    };
+
     const debtSnapshots: DebtSnapshot[] = masterDebts.map((md, idx) => {
-      const scheduledRepay = md.principalRepayment || 0;
-      const opening = Math.round(Number(md.amount) || 0);
+      const scheduledRepay = Number(md.manualPrincipalPayment) || Number(md.currentPrincipalPayment) || Number(md.principalRepayment) || 0;
+      const opening = Math.round(Number(md.currentBalance) || Number(md.amount) || Number(md.originalPrincipal) || 0);
+      const name = md.debtName || md.name || '부채';
+
+      const rate =
+        md.interestRate !== undefined && md.interestRate !== null
+          ? Number(md.interestRate)
+          : md.annualRate !== undefined && md.annualRate !== null
+          ? Number(md.annualRate)
+          : md.rate !== undefined && md.rate !== null
+          ? Number(md.rate)
+          : undefined;
+
+      const repMethod =
+        md.repaymentMethod ||
+        md.repaymentType ||
+        md.paymentType ||
+        md.rateType ||
+        md.amortizationType ||
+        undefined;
+
+      const payDay = parseDay(md.paymentDay ?? md.dueDay ?? md.monthlyPaymentDay ?? md.interestPaymentDay ?? md.repaymentDay ?? md.nextDueDate);
+      const creditor = md.creditorName || md.creditor || md.lender || undefined;
 
       return {
         id: `debt-snap-${monthKey}-${idx + 1}-${Date.now()}`,
         monthlySnapshotId: `msnap-${monthKey}`,
         month: monthKey,
         debtId: md.id,
-        debtNameSnapshot: md.name,
-        debtTypeSnapshot: md.rateType || '원리금상환',
-        creditorNameSnapshot: md.name.includes('담보') ? '금융기관' : '개인/금융',
+        debtNameSnapshot: name,
+        debtTypeSnapshot: repMethod || '원리금상환',
+        creditorNameSnapshot: creditor || (name.includes('담보') ? '금융기관' : '개인/금융'),
         openingPrincipal: opening,
         scheduledPrincipalRepayment: scheduledRepay,
         actualPrincipalRepayment: 0,
         additionalBorrowing: 0,
         endingPrincipal: opening, // In 2-A draft, starting = ending until movements
         interestExpense: md.interestPayment || 0,
+        interestRate: rate,
+        repaymentMethod: repMethod,
+        paymentDay: payDay,
         statusAtMonthEnd: 'active',
         source: 'opening-seed',
         createdAt: nowIso,
         updatedAt: nowIso,
         isHistoricalOnly: false,
-        autoDeductPrincipal: md.name.includes('담보대출') || md.name.includes('금강'),
+        autoDeductPrincipal: name.includes('담보대출') || name.includes('금강'),
         isIncluded: true,
       };
     });

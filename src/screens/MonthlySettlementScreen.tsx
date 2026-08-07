@@ -114,6 +114,8 @@ export interface MonthlySettlementRecord {
   csvAutoRate?: number;
   transactions: ReviewTransaction[];
   financialCost?: number;
+  totalOutflow?: number;
+  netCashFlow?: number;
   specialNotes?: string;
   completedAtDate?: string; // e.g., "2026.07.02"
   completedAtTime?: string; // e.g., "21:14"
@@ -1201,6 +1203,8 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
         ...rec,
         status: '결산잠금', // Lock status (Requirement 2)
         financialCost: financialCostResult.totalCost, // Save financial cost snapshot at lock time
+        totalOutflow: totalCashOutflow,
+        netCashFlow: netCashFlow,
         completedAtDate: dateStr,
         completedAtTime: timeStr,
       }));
@@ -4119,7 +4123,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
       <OpeningSnapshotModal
         isOpen={isOpeningSnapshotModalOpen}
         onClose={() => setIsOpeningSnapshotModalOpen(false)}
-        selectedMonth={currentRecord.month}
+        selectedMonth={currentRecord.month || selectedMonth}
       />
     </div>
   );

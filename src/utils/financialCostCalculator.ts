@@ -1,4 +1,4 @@
-import { SnapshotService, normalizeMonthKey } from '../services/snapshotService';
+import { SnapshotService, normalizeMonthKey, getAllMasterDebts, findMatchingMasterDebt } from '../services/snapshotService';
 import { GlobalMockDataStore } from '../services/dataStore';
 import { OnboardingDebt } from '../types';
 
@@ -87,32 +87,45 @@ export function calculateMonthFinancialCost(
   const [year, monthNum] = normalizedMonth.split('-');
   const formattedMonthLabel = `${year}년 ${parseInt(monthNum, 10)}월`;
 
-  const onboardingDebts = customOnboardingDebts || GlobalMockDataStore.getData().debts?.onboardingDebts || [];
+  const masterDebts = getAllMasterDebts(customOnboardingDebts || GlobalMockDataStore.getData().debts);
 
   const items: DebtFinancialCostItem[] = snapshotDebts.map((d) => {
     const principal = Number(d.openingPrincipal) || 0;
     
-    // 마스터 부채 매칭 (linkedDebtId -> debtId -> debtName)
-    const master = onboardingDebts.find(
-      (m) =>
-        (d as any).linkedDebtId && m.id === (d as any).linkedDebtId
-          ? true
-          : m.id === d.debtId || m.debtName === d.debtNameSnapshot || (m as any).name === d.debtNameSnapshot
-    );
+    // 마스터 부채 매칭
+    const master = findMatchingMasterDebt(d, masterDebts);
 
     const masterRate =
       master?.interestRate !== undefined && master?.interestRate !== null
         ? Number(master.interestRate)
         : master?.annualRate !== undefined && master?.annualRate !== null
         ? Number(master.annualRate)
-        : 0;
+        : master?.rate !== undefined && master?.rate !== null
+        ? Number(master.rate)
+        : master?.currentRate !== undefined && master?.currentRate !== null
+        ? Number(master.currentRate)
+        : undefined;
 
-    const hasRate = masterRate > 0;
-    const monthlyInterest = calculateMonthlyInterest(principal, masterRate);
+    const snapshotRate = d.interestRate !== undefined && d.interestRate !== null ? Number(d.interestRate) : undefined;
+    const rate = masterRate !== undefined ? masterRate : (snapshotRate !== undefined ? snapshotRate : 0);
 
-    const name = d.debtNameSnapshot || master?.debtName || '부채';
-    const creditor = d.creditorNameSnapshot || master?.lender || (master as any)?.creditor || '금융기관';
-    const repaymentMethod = master?.repaymentMethod || master?.repaymentType || d.debtTypeSnapshot || '원리금상환';
+    const hasRate = rate > 0;
+    const monthlyInterest = calculateMonthlyInterest(principal, rate);
+
+    const name = d.debtNameSnapshot || master?.debtName || master?.name || '부채';
+    const creditor = master?.creditorName || master?.creditor || master?.lender || d.creditorNameSnapshot || '금융기관';
+    const repaymentMethod =
+      master?.repaymentMethod ||
+      master?.repaymentType ||
+      master?.paymentType ||
+      master?.rateType ||
+      d.repaymentMethod ||
+      d.debtTypeSnapshot ||
+      '원리금상환';
+
+    const sourceTag = master
+      ? `${formattedMonthLabel} 확정 스냅샷 잔액 + 기본정보 금리`
+      : `${formattedMonthLabel} 확정 스냅샷 잔액 및 이율`;
 
     return {
       id: d.id,
@@ -121,11 +134,11 @@ export function calculateMonthFinancialCost(
       name,
       creditor,
       principal,
-      rate: masterRate,
+      rate,
       hasRate,
       monthlyInterest,
       repaymentMethod,
-      sourceTag: `${formattedMonthLabel} 확정 스냅샷 잔액 + 기본정보 금리`,
+      sourceTag,
       isHistorical: Boolean(d.isHistoricalOnly),
     };
   });
