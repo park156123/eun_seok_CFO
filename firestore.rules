@@ -1,0 +1,40 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: Check if request is authenticated with an email
+    function isAuthenticated() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+
+    // Helper: OWNER check (Strictly park156123@gmail.com)
+    function isOwner() {
+      return isAuthenticated() &&
+        request.auth.token.email.lower() == 'park156123@gmail.com';
+    }
+
+    // Households collection
+    match /households/{householdId} {
+      // Read: Allowed for authenticated users
+      allow read: if isAuthenticated();
+
+      // Write (create/update/delete): Strictly restricted to OWNER only
+      // VIEWER cannot modify household doc, ownerEmail, members, or roles
+      allow write: if isOwner();
+
+      // Subcollections under household (snapshots, monthlySettlements, ledger, master, etc.)
+      match /{allSubcollections=**} {
+        // Read: OWNER and VIEWER can read
+        allow read: if isAuthenticated();
+
+        // Write: ONLY OWNER can write (create, update, delete)
+        allow write: if isOwner();
+      }
+    }
+
+    // Default deny all other paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

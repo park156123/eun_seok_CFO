@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { Transaction } from '../types';
 import { CONSUMER_CATEGORY_GROUPS } from '../data/consumerCategories';
+import { auth } from '../services/firebase';
+import { getUserRole } from '../services/householdService';
+import { ShieldAlert } from 'lucide-react';
 
 interface AddTransactionModalProps {
   isOpen: boolean;
@@ -18,6 +21,10 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState('식비');
   const [memo, setMemo] = useState('');
+
+  const currentUserEmail = auth.currentUser?.email;
+  const userRole = getUserRole(currentUserEmail);
+  const isViewer = userRole === 'viewer';
 
   if (!isOpen) return null;
 
@@ -142,11 +149,23 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
             />
           </div>
 
+          {isViewer && (
+            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-800 text-xs flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 shrink-0 text-amber-600" />
+              <span>VIEWER (읽기 전용 계정) 권한입니다. 내역 추가가 제한됩니다.</span>
+            </div>
+          )}
+
           <button
             type="submit"
-            className="w-full py-3.5 bg-[#00236f] text-white font-bold text-sm rounded-xl shadow-md transition-transform active:scale-95"
+            disabled={isViewer}
+            className={`w-full py-3.5 font-bold text-sm rounded-xl shadow-md transition-all ${
+              isViewer
+                ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none'
+                : 'bg-[#00236f] text-white active:scale-95'
+            }`}
           >
-            저장하기
+            {isViewer ? '저장 불가 (VIEWER 권한)' : '저장하기'}
           </button>
         </form>
       </div>

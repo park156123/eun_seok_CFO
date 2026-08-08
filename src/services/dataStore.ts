@@ -55,6 +55,15 @@ import {
   DebtSnapshot,
   MonthlyDebtMovement,
 } from '../types';
+import { auth } from './firebase';
+import { getUserRole } from './householdService';
+import {
+  fetchMasterFromFirestore,
+  fetchLedgerFromFirestore,
+  fetchPlannerFromFirestore,
+  fetchMonthlySettlementFromFirestore,
+  saveAllToFirestoreFromAppData,
+} from './firestoreDataService';
 
 // Storage key for persistent mock data in browser session/local storage
 const LOCAL_STORAGE_KEY = 'cfo_global_mock_datastore_v1';
@@ -200,8 +209,105 @@ class GlobalMockDataStoreImpl implements IDataStore {
   private data: AppData;
   private listeners: Set<(data: AppData) => void> = new Set();
 
+  private lastFirestoreError: string | null = null;
+  private lastFirestoreSaveTime: string | null = null;
+  private errorListeners: Set<(errMessage: string) => void> = new Set();
+
   constructor() {
     this.data = this.loadFromStorage();
+    // Automatically trigger Firestore READ sync on load if online
+    this.syncWithFirestore();
+  }
+
+  public subscribeError(listener: (errMessage: string) => void): () => void {
+    this.errorListeners.add(listener);
+    return () => {
+      this.errorListeners.delete(listener);
+    };
+  }
+
+  private notifyErrorListeners(msg: string): void {
+    this.errorListeners.forEach((l) => l(msg));
+  }
+
+  public getFirestoreWriteStatus() {
+    return {
+      lastSaveTime: this.lastFirestoreSaveTime,
+      lastError: this.lastFirestoreError,
+    };
+  }
+
+  public async syncWithFirestore(): Promise<boolean> {
+    try {
+      const fsMaster = await fetchMasterFromFirestore();
+      const fsLedger = await fetchLedgerFromFirestore();
+      const fsPlanner = await fetchPlannerFromFirestore();
+      const fsSettlement = await fetchMonthlySettlementFromFirestore('2026-04');
+
+      if (fsMaster || fsLedger || fsPlanner) {
+        if (fsMaster?.userInfo) this.data.userInfo = { ...this.data.userInfo, ...fsMaster.userInfo };
+        if (fsMaster?.assets) this.data.assets = fsMaster.assets;
+        if (fsMaster?.debts) this.data.debts = fsMaster.debts;
+        if (fsMaster?.monthlyIncome) this.data.monthlyIncome = fsMaster.monthlyIncome;
+        if (fsMaster?.fixedExpenses) this.data.fixedExpenses = fsMaster.fixedExpenses;
+        if (fsMaster?.financialProducts) this.data.financialProducts = fsMaster.financialProducts;
+        if (fsMaster?.businessInfo) this.data.businessInfo = fsMaster.businessInfo;
+        if (fsMaster?.rules) this.data.rules = fsMaster.rules as any;
+
+        if (fsLedger?.transactions) {
+          this.data.otherSettings.transactions = fsLedger.transactions;
+          if (fsLedger.activeCsvSession) {
+            this.data.otherSettings.activeCsvSession = fsLedger.activeCsvSession;
+          }
+        }
+
+        if (fsPlanner?.goals) this.data.goals.mainGoals = fsPlanner.goals;
+        if (fsPlanner?.onboardingGoals) this.data.goals.onboardingGoals = fsPlanner.onboardingGoals;
+        if (fsPlanner?.schedules) this.data.otherSettings.schedules = fsPlanner.schedules;
+
+        if (fsSettlement?.settlementData) {
+          this.data.otherSettings.settlementData = fsSettlement.settlementData;
+        }
+
+        this.notifyListeners();
+        return true;
+      }
+    } catch (err) {
+      console.warn('Firestore Primary READ 동기화 실패. localStorage fallback 안전 유지:', err);
+    }
+    return false;
+  }
+
+  private saveToStorage(): void {
+    const userEmail = auth.currentUser?.email;
+    const role = getUserRole(userEmail);
+
+    try {
+      this.syncAutoPlannerSchedules();
+      // 1. Safe localStorage Backup (ALWAYS PRESERVED FOR RECOVERY, NEVER DELETED)
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(this.data));
+    } catch (e) {
+      console.error('Failed to save to localStorage backup:', e);
+    }
+
+    // 2. Primary WRITE to Firestore (OWNER ONLY)
+    if (role === 'owner') {
+      saveAllToFirestoreFromAppData(this.data)
+        .then(() => {
+          this.lastFirestoreSaveTime = new Date().toISOString();
+          this.lastFirestoreError = null;
+        })
+        .catch((err: any) => {
+          const msg = `Firestore Primary WRITE 저장 실패: ${err?.message || '네트워크/권한 오류'}`;
+          console.error(msg, err);
+          this.lastFirestoreError = msg;
+          this.notifyErrorListeners(msg);
+        });
+    } else if (role === 'viewer') {
+      console.warn('VIEWER 계정은 READ ONLY입니다. Firestore WRITE가 실행되지 않습니다.');
+    }
+
+    this.notifyListeners();
   }
 
   private loadFromStorage(): AppData {
@@ -252,7 +358,9 @@ class GlobalMockDataStoreImpl implements IDataStore {
             incomeRecords: (parsed.monthlyIncome?.incomeRecords || []).filter(
               (r: IncomeRecord) => !(r.year === 2026 && (r.month === 5 || r.month === 6))
             ),
-            legacyMonthlyTotalIncome: parsed.monthlyIncome?.legacyMonthlyTotalIncome,
+            ...(parsed.monthlyIncome?.legacyMonthlyTotalIncome !== undefined
+              ? { legacyMonthlyTotalIncome: parsed.monthlyIncome.legacyMonthlyTotalIncome }
+              : {}),
           },
           fixedExpenses: parsed.fixedExpenses || [],
           financialProducts: parsed.financialProducts || [],
@@ -284,16 +392,6 @@ class GlobalMockDataStoreImpl implements IDataStore {
       console.warn('Failed to parse localStorage dataStore:', e);
     }
     return JSON.parse(JSON.stringify(INITIAL_APP_DATA));
-  }
-
-  private saveToStorage(): void {
-    try {
-      this.syncAutoPlannerSchedules();
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(this.data));
-    } catch (e) {
-      console.error('Failed to save to localStorage:', e);
-    }
-    this.notifyListeners();
   }
 
   private notifyListeners(): void {

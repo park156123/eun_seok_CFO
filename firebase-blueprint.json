@@ -1,0 +1,28 @@
+{
+  "entities": {
+    "Household": {
+      "title": "가족 CFO Household",
+      "description": "우리집 CFO 가족 구성원 및 권한 정보 메타데이터",
+      "properties": {
+        "name": { "type": "string", "description": "가구명" },
+        "ownerEmail": { "type": "string", "description": "OWNER 계정 이메일" },
+        "allowedEmails": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "접근 허용 이메일 목록"
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "email": { "type": "string" },
+              "role": { "type": "string" }
+            }
+          },
+          "description": "구성원 역할 목록"
+        }
+      }
+    }
+  }
+}
