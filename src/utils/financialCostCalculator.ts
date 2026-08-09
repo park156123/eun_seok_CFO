@@ -49,8 +49,7 @@ export function calculateMonthFinancialCost(
   const openingSnap = SnapshotService.getOpeningSnapshot(normalizedMonth);
 
   const hasConfirmedOpening =
-    status === 'confirmed' ||
-    (openingSnap?.source === 'opening-seed' && openingSnap?.status === 'confirmed');
+    status === 'confirmed' || openingSnap?.status === 'confirmed';
 
   const snapshotDebts = hasConfirmedOpening
     ? SnapshotService.getDebtSnapshotsByMonth(normalizedMonth).filter((d) => d.isIncluded !== false)

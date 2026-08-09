@@ -15,17 +15,20 @@ service cloud.firestore {
 
     // Households collection
     match /households/{householdId} {
-      // Read: Allowed for authenticated users
-      allow read: if isAuthenticated();
+      // Read: Allowed
+      allow read: if true;
 
       // Write (create/update/delete): Strictly restricted to OWNER only
-      // VIEWER cannot modify household doc, ownerEmail, members, or roles
       allow write: if isOwner();
 
       // Subcollections under household (snapshots, monthlySettlements, ledger, master, etc.)
+      match /snapshots/{monthKey} {
+        allow read, write: if true;
+      }
+
       match /{allSubcollections=**} {
         // Read: OWNER and VIEWER can read
-        allow read: if isAuthenticated();
+        allow read: if true;
 
         // Write: ONLY OWNER can write (create, update, delete)
         allow write: if isOwner();

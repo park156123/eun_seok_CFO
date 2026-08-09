@@ -504,7 +504,15 @@ export type SnapshotSource =
   | 'opening-seed'
   | 'carry-forward'
   | 'settlement'
-  | 'manual-adjustment';
+  | 'manual-adjustment'
+  | 'user-input';
+
+export interface SnapshotStoreState {
+  monthlySnapshots: Record<string, MonthlySnapshot>;
+  assetSnapshots: Record<string, AssetSnapshot[]>;
+  debtSnapshots: Record<string, DebtSnapshot[]>;
+  debtMovements: Record<string, MonthlyDebtMovement[]>;
+}
 
 export type DebtMovementType =
   | 'principal-repayment'
@@ -543,8 +551,10 @@ export interface AssetSnapshot {
   monthlySnapshotId: string;
   month: string; // YYYY-MM
   assetId?: string; // Link to Master Asset
+  linkedAssetId?: string;
   assetNameSnapshot: string;
   assetTypeSnapshot: string;
+  assetValueSnapshot?: number;
   category?: string;
   subType?: string;
   value: number;
@@ -562,6 +572,7 @@ export interface DebtSnapshot {
   monthlySnapshotId: string;
   month: string; // YYYY-MM
   debtId?: string; // Link to Master Debt
+  linkedDebtId?: string;
   debtNameSnapshot: string;
   debtTypeSnapshot: string;
   creditorNameSnapshot?: string;
@@ -570,6 +581,7 @@ export interface DebtSnapshot {
   actualPrincipalRepayment: number;
   additionalBorrowing: number;
   endingPrincipal: number;
+  debtBalanceSnapshot?: number;
   interestExpense: number;
   interestRate?: number;
   repaymentMethod?: string;
@@ -583,7 +595,6 @@ export interface DebtSnapshot {
   createdAt: string;
   updatedAt: string;
   isHistoricalOnly?: boolean;
-  linkedDebtId?: string;
   autoDeductPrincipal?: boolean;
   isIncluded?: boolean;
 }

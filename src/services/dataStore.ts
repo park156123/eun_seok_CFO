@@ -62,7 +62,9 @@ import {
   fetchLedgerFromFirestore,
   fetchPlannerFromFirestore,
   fetchMonthlySettlementFromFirestore,
+  fetchAllSnapshotsFromFirestore,
   saveAllToFirestoreFromAppData,
+  saveSnapshotToFirestore,
 } from './firestoreDataService';
 
 // Storage key for persistent mock data in browser session/local storage
@@ -243,8 +245,26 @@ class GlobalMockDataStoreImpl implements IDataStore {
       const fsLedger = await fetchLedgerFromFirestore();
       const fsPlanner = await fetchPlannerFromFirestore();
       const fsSettlement = await fetchMonthlySettlementFromFirestore('2026-04');
+      const fsSnapshots = await fetchAllSnapshotsFromFirestore();
 
-      if (fsMaster || fsLedger || fsPlanner) {
+      if (fsSnapshots && Object.keys(fsSnapshots).length > 0) {
+        Object.entries(fsSnapshots).forEach(([monthKey, snapDoc]) => {
+          if (snapDoc && snapDoc.monthlySnapshot) {
+            SnapshotService.saveMonthlySnapshot(snapDoc.monthlySnapshot);
+            if (snapDoc.assetSnapshots) {
+              SnapshotService.saveAssetSnapshots(monthKey, snapDoc.assetSnapshots);
+            }
+            if (snapDoc.debtSnapshots) {
+              SnapshotService.saveDebtSnapshots(monthKey, snapDoc.debtSnapshots);
+            }
+            if (snapDoc.debtMovements) {
+              snapDoc.debtMovements.forEach((m) => SnapshotService.saveMonthlyDebtMovement(m));
+            }
+          }
+        });
+      }
+
+      if (fsMaster || fsLedger || fsPlanner || (fsSnapshots && Object.keys(fsSnapshots).length > 0)) {
         if (fsMaster?.userInfo) this.data.userInfo = { ...this.data.userInfo, ...fsMaster.userInfo };
         if (fsMaster?.assets) this.data.assets = fsMaster.assets;
         if (fsMaster?.debts) this.data.debts = fsMaster.debts;
@@ -1651,12 +1671,39 @@ class GlobalMockDataStoreImpl implements IDataStore {
   }
   public saveOpeningSnapshot(monthly: MonthlySnapshot, assets: AssetSnapshot[], debts: DebtSnapshot[]) {
     SnapshotService.saveOpeningSnapshot(monthly, assets, debts);
+    if (monthly && monthly.status === 'confirmed') {
+      const monthKey = monthly.month;
+      const movements = SnapshotService.getMonthlyDebtMovements(monthKey) || [];
+      saveSnapshotToFirestore(monthKey, {
+        monthlySnapshot: monthly,
+        assetSnapshots: assets,
+        debtSnapshots: debts,
+        debtMovements: movements,
+      }).catch((err) => {
+        console.warn(`[Firestore] Failed to save confirmed snapshot for ${monthKey}:`, err);
+      });
+    }
   }
   public updateDraftOpeningSnapshot(monthly: MonthlySnapshot, assets: AssetSnapshot[], debts: DebtSnapshot[]) {
     SnapshotService.updateDraftOpeningSnapshot(monthly, assets, debts);
   }
   public confirmOpeningSnapshot(month: string) {
     SnapshotService.confirmOpeningSnapshot(month);
+    const monthKey = month.trim();
+    const confirmedMonthly = SnapshotService.getOpeningSnapshot(monthKey);
+    if (confirmedMonthly && confirmedMonthly.status === 'confirmed') {
+      const assets = SnapshotService.getAssetSnapshotsByMonth(monthKey);
+      const debts = SnapshotService.getDebtSnapshotsByMonth(monthKey);
+      const movements = SnapshotService.getMonthlyDebtMovements(monthKey) || [];
+      saveSnapshotToFirestore(monthKey, {
+        monthlySnapshot: confirmedMonthly,
+        assetSnapshots: assets,
+        debtSnapshots: debts,
+        debtMovements: movements,
+      }).catch((err) => {
+        console.warn(`[Firestore] Failed to save confirmed snapshot for ${monthKey}:`, err);
+      });
+    }
   }
 
   public getOpeningSnapshotData(month: string) {
@@ -1835,6 +1882,17 @@ class GlobalMockDataStoreImpl implements IDataStore {
     SnapshotService.saveAssetSnapshots(monthKey, updatedAssets);
     SnapshotService.saveDebtSnapshots(monthKey, updatedDebts);
 
+    // Sync identical confirmed snapshot payload to Firestore
+    const movements = SnapshotService.getMonthlyDebtMovements(monthKey) || [];
+    saveSnapshotToFirestore(monthKey, {
+      monthlySnapshot: confirmedMonthly,
+      assetSnapshots: updatedAssets,
+      debtSnapshots: updatedDebts,
+      debtMovements: movements,
+    }).catch((err) => {
+      console.warn(`[Firestore] Failed to save confirmed snapshot draft for ${monthKey}:`, err);
+    });
+
     this.notifyListeners();
 
     return {
@@ -1874,6 +1932,18 @@ class GlobalMockDataStoreImpl implements IDataStore {
     };
 
     SnapshotService.saveOpeningSnapshot(updatedMonthly, draft.assets, draft.debts);
+
+    // Sync identical updated confirmed snapshot payload to Firestore
+    const movements = SnapshotService.getMonthlyDebtMovements(monthKey) || [];
+    saveSnapshotToFirestore(monthKey, {
+      monthlySnapshot: updatedMonthly,
+      assetSnapshots: draft.assets,
+      debtSnapshots: draft.debts,
+      debtMovements: movements,
+    }).catch((err) => {
+      console.warn(`[Firestore] Failed to save updated confirmed snapshot for ${monthKey}:`, err);
+    });
+
     this.notifyListeners();
 
     return {

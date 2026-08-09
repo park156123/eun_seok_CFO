@@ -7,10 +7,12 @@ import {
 } from 'firebase/auth';
 import { auth } from './firebase';
 
+const env = typeof import.meta !== 'undefined' && import.meta?.env ? import.meta.env : (process.env as any) || {};
+
 // Default allowed email list: includes primary user email
 // Additional spouse/family emails can be configured via VITE_ALLOWED_EMAILS environment variable (comma separated)
-const envAllowedEmails = import.meta.env.VITE_ALLOWED_EMAILS
-  ? import.meta.env.VITE_ALLOWED_EMAILS.split(',').map((e: string) => e.trim().toLowerCase())
+const envAllowedEmails = env.VITE_ALLOWED_EMAILS
+  ? env.VITE_ALLOWED_EMAILS.split(',').map((e: string) => e.trim().toLowerCase())
   : [];
 
 export const ALLOWED_EMAILS: string[] = Array.from(
