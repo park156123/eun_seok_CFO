@@ -62,6 +62,8 @@ import {
   fetchLedgerFromFirestore,
   fetchPlannerFromFirestore,
   fetchMonthlySettlementFromFirestore,
+  fetchAllMonthlySettlementRecordsFromFirestore,
+  backfillLocalMonthlySettlementsToFirestore,
   fetchAllSnapshotsFromFirestore,
   saveAllToFirestoreFromAppData,
   saveSnapshotToFirestore,
@@ -246,6 +248,37 @@ class GlobalMockDataStoreImpl implements IDataStore {
       const fsPlanner = await fetchPlannerFromFirestore();
       const fsSettlement = await fetchMonthlySettlementFromFirestore('2026-04');
       const fsSnapshots = await fetchAllSnapshotsFromFirestore();
+      const fsSettlementRecords = await fetchAllMonthlySettlementRecordsFromFirestore();
+
+      if (fsSettlementRecords && Object.keys(fsSettlementRecords).length > 0) {
+        try {
+          const localSaved = localStorage.getItem('cfo_monthly_records_v3');
+          const localMap = localSaved ? JSON.parse(localSaved) : {};
+          const merged: Record<string, any> = {};
+
+          // First migrate localMap keys to YYYY-MM
+          Object.entries(localMap).forEach(([k, v]) => {
+            const match = k.match(/(\d{4})년\s*(\d{1,2})월/);
+            const keyNorm = match ? `${match[1]}-${String(match[2]).padStart(2, '0')}` : k;
+            merged[keyNorm] = v;
+          });
+
+          // Apply Firestore records (Firestore primary override)
+          Object.entries(fsSettlementRecords).forEach(([k, v]) => {
+            const match = k.match(/(\d{4})년\s*(\d{1,2})월/);
+            const keyNorm = match ? `${match[1]}-${String(match[2]).padStart(2, '0')}` : k;
+            merged[keyNorm] = v;
+          });
+
+          localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(merged));
+          this.notifyListeners();
+        } catch (e) {
+          console.error('Error updating cfo_monthly_records_v3 cache:', e);
+        }
+      }
+
+      // Safe Backfill: if browser local storage has confirmed 2026-04 settlement record that is missing on Firestore
+      await backfillLocalMonthlySettlementsToFirestore(fsSettlementRecords || {});
 
       if (fsSnapshots && Object.keys(fsSnapshots).length > 0) {
         Object.entries(fsSnapshots).forEach(([monthKey, snapDoc]) => {
@@ -264,7 +297,7 @@ class GlobalMockDataStoreImpl implements IDataStore {
         });
       }
 
-      if (fsMaster || fsLedger || fsPlanner || (fsSnapshots && Object.keys(fsSnapshots).length > 0)) {
+      if (fsMaster || fsLedger || fsPlanner || (fsSnapshots && Object.keys(fsSnapshots).length > 0) || (fsSettlementRecords && Object.keys(fsSettlementRecords).length > 0)) {
         if (fsMaster?.userInfo) this.data.userInfo = { ...this.data.userInfo, ...fsMaster.userInfo };
         if (fsMaster?.assets) this.data.assets = fsMaster.assets;
         if (fsMaster?.debts) this.data.debts = fsMaster.debts;

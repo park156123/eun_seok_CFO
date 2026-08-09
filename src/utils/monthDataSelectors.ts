@@ -102,11 +102,17 @@ export function getMonthlyRecordForMonth(monthInput: string): any {
     const saved = localStorage.getItem('cfo_monthly_records_v3');
     if (saved) {
       const recordsMap = JSON.parse(saved);
+      if (recordsMap[norm.yyyyMm]) {
+        return recordsMap[norm.yyyyMm];
+      }
       if (recordsMap[norm.formattedMonth]) {
         return recordsMap[norm.formattedMonth];
       }
-      if (recordsMap[norm.yyyyMm]) {
-        return recordsMap[norm.yyyyMm];
+      for (const [key, val] of Object.entries(recordsMap)) {
+        const kNorm = normalizeMonthKey(key);
+        if (kNorm.yyyyMm === norm.yyyyMm) {
+          return val;
+        }
       }
     }
   } catch (e) {
@@ -183,23 +189,35 @@ export function getMonthlySettlementSummary(selectedMonthInput: string): Monthly
     };
   }
 
-  const totalIncome = (currentRecord.incomes || []).reduce(
-    (sum: number, inc: any) => sum + (Number(inc.amount) || 0),
-    0
-  );
+  const isLockedSettlement = currentRecord.status === '결산잠금' || currentRecord.status === '완료';
 
-  const totalSavings = (currentRecord.savingsInvestments || []).reduce(
-    (sum: number, sav: any) => sum + (Number(sav.amount) || 0),
-    0
-  );
+  // 1. Total Income: use stored confirmed totalIncome if available when locked
+  const totalIncome = (isLockedSettlement && currentRecord.totalIncome !== undefined && currentRecord.totalIncome !== null)
+    ? Number(currentRecord.totalIncome)
+    : (currentRecord.incomes || []).reduce(
+        (sum: number, inc: any) => sum + (Number(inc.amount) || 0),
+        0
+      );
 
+  // 2. Total Savings: use stored confirmed totalSavings if available when locked
+  const totalSavings = (isLockedSettlement && currentRecord.totalSavings !== undefined && currentRecord.totalSavings !== null)
+    ? Number(currentRecord.totalSavings)
+    : (currentRecord.savingsInvestments || []).reduce(
+        (sum: number, sav: any) => sum + (Number(sav.amount) || 0),
+        0
+      );
+
+  // 3. Living Expense: use stored confirmed livingExpense if available when locked
   const consumerTransactions = (currentRecord.transactions || []).filter(isConsumerTransaction);
-  const livingExpense = consumerTransactions.reduce((s: number, t: any) => s + (Number(t.amount) || 0), 0);
+  const calculatedLivingExpense = consumerTransactions.reduce((s: number, t: any) => s + (Number(t.amount) || 0), 0);
+  const livingExpense = (isLockedSettlement && currentRecord.livingExpense !== undefined && currentRecord.livingExpense !== null)
+    ? Number(currentRecord.livingExpense)
+    : calculatedLivingExpense;
 
+  // 4. Financial Cost: use stored confirmed financialCost if available when locked
   const monthKey = norm.yyyyMm;
   const financialCostResult = calculateMonthFinancialCost(monthKey);
   const hasConfirmedOpeningForMonth = financialCostResult.hasSnapshot;
-  const isLockedSettlement = currentRecord.status === '결산잠금' || currentRecord.status === '완료';
 
   const isLockedWithSnapshotLookupError =
     isLockedSettlement &&
@@ -208,9 +226,10 @@ export function getMonthlySettlementSummary(selectedMonthInput: string): Monthly
     financialCostResult.totalCost > 0;
 
   const financialCost = (isLockedSettlement && currentRecord.financialCost !== undefined && !isLockedWithSnapshotLookupError)
-    ? currentRecord.financialCost
+    ? Number(currentRecord.financialCost)
     : financialCostResult.totalCost;
 
+  // 5. Debt Principal Repayment: use stored confirmed principalRepayment if available when locked
   const csvDebtPrincipalTxs = (currentRecord.transactions || []).filter((t: any) => {
     if (t.isIncome) return false;
     const cls = t.classification;
@@ -232,8 +251,20 @@ export function getMonthlySettlementSummary(selectedMonthInput: string): Monthly
     .filter((d) => (Number(d.scheduledPrincipalRepayment) || 0) > 0);
   const snapshotScheduledSum = snapshotScheduledItems.reduce((s: number, d: any) => s + (Number(d.scheduledPrincipalRepayment) || 0), 0);
 
-  const debtPrincipal = csvDebtPrincipalSum + snapshotScheduledSum;
-  const totalOutflow = livingExpense + financialCost + debtPrincipal + totalSavings;
+  const calculatedDebtPrincipal = csvDebtPrincipalSum + snapshotScheduledSum;
+  const debtPrincipal = (isLockedSettlement && (currentRecord.principalRepayment !== undefined || currentRecord.debtPrincipalRepayment !== undefined))
+    ? Number(currentRecord.principalRepayment ?? currentRecord.debtPrincipalRepayment)
+    : calculatedDebtPrincipal;
+
+  // 6. Total Cash Outflow: use stored confirmed totalCashOutflow if available when locked
+  const totalOutflow = (isLockedSettlement && currentRecord.totalCashOutflow !== undefined && currentRecord.totalCashOutflow !== null)
+    ? Number(currentRecord.totalCashOutflow)
+    : (livingExpense + financialCost + debtPrincipal + totalSavings);
+
+  // 7. Net Cash Flow: use stored confirmed netCashFlow if available when locked
+  const netCashflow = (isLockedSettlement && currentRecord.netCashFlow !== undefined && currentRecord.netCashFlow !== null)
+    ? Number(currentRecord.netCashFlow)
+    : (totalIncome - totalOutflow);
 
   const statusReported = status === 'completed' ? 'confirmed' : status;
 
@@ -255,7 +286,7 @@ export function getMonthlySettlementSummary(selectedMonthInput: string): Monthly
     debtPrincipal,
     financialCost,
     totalSavings,
-    netCashflow: totalIncome - totalOutflow,
+    netCashflow,
   };
 }
 

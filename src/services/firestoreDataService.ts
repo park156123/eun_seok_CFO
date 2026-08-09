@@ -228,6 +228,102 @@ export const saveMonthlySettlementToFirestore = async (
   await setDoc(docRef, payload, { merge: true });
 };
 
+export interface MonthlySettlementRecordDocData {
+  monthKey: string; // YYYY-MM
+  record?: any;
+  updatedAt: string;
+  confirmedAt?: string;
+  [key: string]: any;
+}
+
+/**
+ * Fetches all MonthlySettlementRecords from Firestore collection households/family_cfo/monthlySettlements.
+ */
+export const fetchAllMonthlySettlementRecordsFromFirestore = async (): Promise<Record<string, any>> => {
+  try {
+    const colRef = collection(db, 'households', HOUSEHOLD_ID, 'monthlySettlements');
+    const snap = await getDocs(colRef);
+    const results: Record<string, any> = {};
+    snap.forEach((docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const rawKey = docSnap.id; // e.g. '2026-04'
+        const normKey = rawKey.includes('-') ? rawKey : (rawKey.match(/(\d{4})년\s*(\d{1,2})월/) ? `${rawKey.match(/(\d{4})년\s*(\d{1,2})월/)![1]}-${String(rawKey.match(/(\d{4})년\s*(\d{1,2})월/)![2]).padStart(2, '0')}` : rawKey);
+        const record = data.record || data;
+        if (record && (record.month || record.status || record.incomes)) {
+          results[normKey] = record;
+        }
+      }
+    });
+    return results;
+  } catch (err) {
+    console.warn('Firestore: fetchAllMonthlySettlementRecords failed:', err);
+    return {};
+  }
+};
+
+/**
+ * Saves a MonthlySettlementRecord to Firestore under households/family_cfo/monthlySettlements/{monthKey}.
+ */
+export const saveMonthlySettlementRecordToFirestore = async (
+  monthKey: string,
+  record: any
+): Promise<void> => {
+  try {
+    const docRef = doc(db, 'households', HOUSEHOLD_ID, 'monthlySettlements', monthKey);
+    const data: MonthlySettlementRecordDocData = {
+      monthKey,
+      ...record,
+      record,
+      updatedAt: new Date().toISOString(),
+      confirmedAt: record.completedAtDate ? `${record.completedAtDate} ${record.completedAtTime || ''}`.trim() : undefined,
+    };
+    const payload = removeUndefinedFields(data);
+    await setDoc(docRef, payload, { merge: true });
+    console.log(`Firestore: Saved monthlySettlements/${monthKey} successfully.`);
+  } catch (err) {
+    console.error(`Firestore: Failed to save monthlySettlements/${monthKey}:`, err);
+  }
+};
+
+/**
+ * Safely backfills real browser localStorage MonthlySettlementRecords (e.g. 2026-04) to Firestore
+ * if Firestore does not have them yet.
+ */
+export const backfillLocalMonthlySettlementsToFirestore = async (
+  firestoreRecordsMap: Record<string, any>
+): Promise<void> => {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const localSaved = localStorage.getItem('cfo_monthly_records_v3');
+    if (!localSaved) return;
+
+    const localMap = JSON.parse(localSaved);
+    for (const [key, record] of Object.entries(localMap)) {
+      if (!record || typeof record !== 'object') continue;
+      const rec = record as any;
+      if (rec.status === '완료' || rec.status === '결산잠금' || rec.status === '진행중') {
+        let normKey = key;
+        if (rec.month) {
+          const match = rec.month.match(/(\d{4})년\s*(\d{1,2})월/);
+          if (match) {
+            normKey = `${match[1]}-${String(match[2]).padStart(2, '0')}`;
+          }
+        }
+        if (/^\d{4}-\d{2}$/.test(normKey)) {
+          const fsRecord = firestoreRecordsMap[normKey];
+          if (!fsRecord || (fsRecord.status !== rec.status && rec.status === '결산잠금')) {
+            console.log(`Firestore Backfill: Uploading local MonthlySettlementRecord for ${normKey} to Firestore...`);
+            await saveMonthlySettlementRecordToFirestore(normKey, rec);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Firestore Backfill for MonthlySettlements warning:', err);
+  }
+};
+
 // ==========================================
 // 4. Ledger (Transactions) Service
 // ==========================================

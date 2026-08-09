@@ -26,6 +26,10 @@ service cloud.firestore {
         allow read, write: if true;
       }
 
+      match /monthlySettlements/{monthKey} {
+        allow read, write: if true;
+      }
+
       match /{allSubcollections=**} {
         // Read: OWNER and VIEWER can read
         allow read: if true;

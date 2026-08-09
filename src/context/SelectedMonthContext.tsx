@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState } from 'react';
+import { normalizeMonthKey } from '../utils/monthDataSelectors';
 
 // Format helper functions
 // '2026-04' -> '2026년 4월'
@@ -84,22 +85,14 @@ function getInitialSelectedMonth(): string {
       });
       if (completedList.length > 0) {
         completedList.sort((a, b) => {
-          const mA = a.match(/(\d{4})년\s*(\d{1,2})월/);
-          const mB = b.match(/(\d{4})년\s*(\d{1,2})월/);
-          const yA = mA ? parseInt(mA[1], 10) : 0;
-          const monA = mA ? parseInt(mA[2], 10) : 0;
-          const yB = mB ? parseInt(mB[1], 10) : 0;
-          const monB = mB ? parseInt(mB[2], 10) : 0;
-          if (yA !== yB) return yB - yA;
-          return monB - monA;
+          const normA = normalizeMonthKey(a);
+          const normB = normalizeMonthKey(b);
+          if (normA.year !== normB.year) return normB.year - normA.year;
+          return normB.month - normA.month;
         });
         const topKey = completedList[0];
-        const match = topKey.match(/(\d{4})년\s*(\d{1,2})월/);
-        if (match) {
-          const y = match[1];
-          const m = match[2].padStart(2, '0');
-          return `${y}-${m}`;
-        }
+        const normTop = normalizeMonthKey(topKey);
+        return normTop.yyyyMm;
       }
     }
   } catch (e) {

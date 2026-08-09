@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { SettlementData, IncomeSource, IncomeRecord, ClassificationResult, ExclusionReasonCode, MerchantRule, ExclusionRule, RuleConfidence, Transaction } from '../types';
 import { GlobalMockDataStore } from '../services/dataStore';
 import { SnapshotService, formatMonthKorean, normalizeMonthKey } from '../services/snapshotService';
+import { saveMonthlySettlementRecordToFirestore, fetchAllMonthlySettlementRecordsFromFirestore } from '../services/firestoreDataService';
 import { ActiveSessionBanner } from '../components/ActiveSessionBanner';
 import { isConsumerTransaction } from '../utils/consumerExpenseUtils';
 import { useSelectedMonth } from '../context/SelectedMonthContext';
@@ -253,37 +254,46 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
         const parsed = JSON.parse(saved);
         delete parsed['2026년 5월'];
         delete parsed['2026년 6월'];
-        try {
-          localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(parsed));
-        } catch (e) {
-          console.error(e);
-        }
-        return parsed;
+        const normalized: Record<string, MonthlySettlementRecord> = {};
+        Object.entries(parsed).forEach(([k, v]) => {
+          if (v && typeof v === 'object') {
+            const norm = normalizeMonthKey(k);
+            normalized[norm.yyyyMm] = v as MonthlySettlementRecord;
+          }
+        });
+        return normalized;
       }
     } catch (e) {
       console.error(e);
     }
-    // Initial default records - 2026년 4월 actual data only
+    // Return default state in React state only (keyed by YYYY-MM) without writing to localStorage/Firestore
     return {
-      '2026년 4월': {
-        month: '2026년 4월',
+      '2026-04': {
+        month: '2026-04',
         year: 2026,
         monthNum: 4,
         status: '결산잠금',
         currentStep: 5,
         incomes: [
-          { id: 'inc-401', incomeName: '미용실 본점', incomeType: '사업소득', amount: 18500000, prevAmount: 18000000 },
-          { id: 'inc-402', incomeName: '현하우스 임대료', incomeType: '임대소득', amount: 4180000, prevAmount: 4180000 },
+          { id: 'inc-401', incomeName: '미용실 본점', incomeType: '사업소득', amount: 28000000, prevAmount: 27500000 },
+          { id: 'inc-402', incomeName: '게스트하우스1', incomeType: '사업소득', amount: 4080000, prevAmount: 4000000 },
+          { id: 'inc-403', incomeName: '현하우스 임대료', incomeType: '임대소득', amount: 4180000, prevAmount: 4180000 },
         ],
         savingsInvestments: [
           { id: 'sav-401', name: '청년희망적금', type: '적금', tradeType: '단순저축', amount: 500000, memo: '매월 자동이체' },
-          { id: 'sav-402', name: '삼성전자 ETF', type: 'ETF', tradeType: '매수', amount: 1000000, memo: '적립식 매수' },
+          { id: 'sav-402', name: '삼성전자 ETF', type: 'ETF', tradeType: '매수', amount: 500000, memo: '적립식 매수' },
         ],
-        csvUploaded: false,
-        csvFileName: '',
-        csvTotalCount: 0,
-        csvAutoCount: 0,
-        csvReviewCount: 0,
+        livingExpense: 8765098,
+        financialCost: 8475400,
+        principalRepayment: 20000000,
+        totalIncome: 36260000,
+        totalCashOutflow: 38240498,
+        netCashFlow: -1980498,
+        csvUploaded: true,
+        csvFileName: '2026-04_거래내역.csv',
+        csvTotalCount: 42,
+        csvAutoCount: 38,
+        csvReviewCount: 4,
         transactions: [],
         completedAtDate: '2026.05.02',
         completedAtTime: '18:30',
@@ -291,21 +301,45 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
     };
   });
 
-  // Save records to localStorage
+  // Sync from Firestore on component mount
   useEffect(() => {
-    localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(recordsMap));
-  }, [recordsMap]);
+    fetchAllMonthlySettlementRecordsFromFirestore().then((fsRecords) => {
+      if (fsRecords && Object.keys(fsRecords).length > 0) {
+        setRecordsMap((prev) => {
+          const merged = { ...prev };
+          Object.entries(fsRecords).forEach(([k, rec]) => {
+            if (rec && typeof rec === 'object') {
+              const norm = normalizeMonthKey(k);
+              merged[norm.yyyyMm] = rec;
+            }
+          });
+          try {
+            localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(merged));
+            GlobalMockDataStore.notifyListeners();
+          } catch (e) {
+            console.error(e);
+          }
+          return merged;
+        });
+      }
+    }).catch((e) => console.warn('MonthlySettlementScreen: Firestore sync failed', e));
+  }, []);
 
   // Current selected month record
-  const currentRecord = recordsMap[selectedMonth] || {
-    month: selectedMonth,
-    status: '미시작',
-    currentStep: 1,
-    incomes: getInitialIncomes(),
-    savingsInvestments: [],
-    csvUploaded: false,
-    transactions: [],
-  };
+  const normSelectedMonth = normalizeMonthKey(selectedMonth);
+  const currentRecord =
+    recordsMap[normSelectedMonth.yyyyMm] ||
+    recordsMap[selectedMonth] ||
+    recordsMap[normSelectedMonth.formattedMonth] ||
+    getMonthlyRecordForMonth(selectedMonth) || {
+      month: normSelectedMonth.yyyyMm,
+      status: '미시작',
+      currentStep: 1,
+      incomes: getInitialIncomes(),
+      savingsInvestments: [],
+      csvUploaded: false,
+      transactions: [],
+    };
 
   // Expanded breakdown card state
   const [expandedCard, setExpandedCard] = useState<'none' | 'living' | 'financial' | 'debt' | 'savings'>('none');
@@ -339,9 +373,10 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
 
   // Helper mutation
   const updateCurrentRecord = (updater: (prev: MonthlySettlementRecord) => MonthlySettlementRecord) => {
+    const normMonth = normalizeMonthKey(selectedMonth).yyyyMm;
     setRecordsMap((prev) => {
-      const rec = prev[selectedMonth] || {
-        month: selectedMonth,
+      const rec = prev[normMonth] || prev[selectedMonth] || {
+        month: normMonth,
         status: '미시작',
         currentStep: 1,
         incomes: getInitialIncomes(),
@@ -349,10 +384,19 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
         csvUploaded: false,
         transactions: [],
       };
-      return {
+      const updated = updater(rec);
+      const nextMap = {
         ...prev,
-        [selectedMonth]: updater(rec),
+        [normMonth]: updated,
       };
+      try {
+        localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(nextMap));
+        saveMonthlySettlementRecordToFirestore(normMonth, updated);
+        GlobalMockDataStore.notifyListeners();
+      } catch (e) {
+        console.error(e);
+      }
+      return nextMap;
     });
   };
 
@@ -1110,11 +1154,25 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   };
 
   // Financial calculations
-  const totalIncome = currentRecord.incomes.reduce((s, i) => s + (i.amount || 0), 0);
-  const totalSavings = currentRecord.savingsInvestments.reduce((s, i) => s + (i.amount || 0), 0);
+  const calculatedTotalIncome = currentRecord.incomes.reduce((s, i) => s + (i.amount || 0), 0);
+  const calculatedTotalSavings = currentRecord.savingsInvestments.reduce((s, i) => s + (i.amount || 0), 0);
 
   const consumerTransactions = currentRecord.transactions.filter(isConsumerTransaction);
-  const livingExpense = consumerTransactions.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const calculatedLivingExpense = consumerTransactions.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+
+  const isLockedSettlement = currentRecord.status === '결산잠금' || currentRecord.status === '완료';
+
+  const totalIncome = (isLockedSettlement && currentRecord.totalIncome !== undefined && currentRecord.totalIncome !== null)
+    ? Number(currentRecord.totalIncome)
+    : calculatedTotalIncome;
+
+  const totalSavings = (isLockedSettlement && currentRecord.totalSavings !== undefined && currentRecord.totalSavings !== null)
+    ? Number(currentRecord.totalSavings)
+    : calculatedTotalSavings;
+
+  const livingExpense = (isLockedSettlement && currentRecord.livingExpense !== undefined && currentRecord.livingExpense !== null)
+    ? Number(currentRecord.livingExpense)
+    : calculatedLivingExpense;
   const consumerExpense = livingExpense;
 
   // Living category breakdown
@@ -1143,8 +1201,6 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   const snapshotDebtsForMonth = SnapshotService.getDebtSnapshotsByMonth(monthKey).filter((d) => d.isIncluded !== false);
   const interestBreakdownList = financialCostResult.items;
 
-  const isLockedSettlement = currentRecord.status === '결산잠금';
-
   // Check if locked settlement has 0 or uncalculated financial cost due to prior snapshot lookup error
   const isLockedWithSnapshotLookupError =
     isLockedSettlement &&
@@ -1153,7 +1209,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
     financialCostResult.totalCost > 0;
 
   const financialCost = (isLockedSettlement && currentRecord.financialCost !== undefined && !isLockedWithSnapshotLookupError)
-    ? currentRecord.financialCost
+    ? Number(currentRecord.financialCost)
     : financialCostResult.totalCost;
 
   const isFinancialCostMismatchWithSnapshot =
@@ -1200,10 +1256,18 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
     }));
 
   const debtPrincipalItems = [...csvDebtPrincipalItems, ...snapshotScheduledItems];
-  const debtPrincipal = debtPrincipalItems.reduce((s, i) => s + i.amount, 0);
+  const calculatedDebtPrincipal = debtPrincipalItems.reduce((s, i) => s + i.amount, 0);
+  const debtPrincipal = (isLockedSettlement && (currentRecord.principalRepayment !== undefined || currentRecord.debtPrincipalRepayment !== undefined))
+    ? Number(currentRecord.principalRepayment ?? currentRecord.debtPrincipalRepayment)
+    : calculatedDebtPrincipal;
 
-  const totalCashOutflow = consumerExpense + financialCost + debtPrincipal + totalSavings;
-  const netCashFlow = totalIncome - totalCashOutflow;
+  const totalCashOutflow = (isLockedSettlement && currentRecord.totalCashOutflow !== undefined && currentRecord.totalCashOutflow !== null)
+    ? Number(currentRecord.totalCashOutflow)
+    : (consumerExpense + financialCost + debtPrincipal + totalSavings);
+
+  const netCashFlow = (isLockedSettlement && currentRecord.netCashFlow !== undefined && currentRecord.netCashFlow !== null)
+    ? Number(currentRecord.netCashFlow)
+    : (totalIncome - totalCashOutflow);
 
   const needsReviewCount = currentRecord.transactions.filter((t) => {
     const cls = t.classification;
