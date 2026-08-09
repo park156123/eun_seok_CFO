@@ -30,7 +30,7 @@ export const ExpenseListScreen: React.FC<ExpenseListScreenProps> = ({
   );
 
   // Filter transactions strictly by selected month using central selector
-  const displayTxs = getTransactionsForMonth(selectedMonth);
+  const displayTxs = getTransactionsForMonth(selectedMonth) || [];
   const includedTxs = displayTxs.filter(isConsumerTransaction);
 
   const categoryFilteredTxs = includedTxs.filter((t) => {

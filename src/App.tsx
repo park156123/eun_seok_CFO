@@ -133,11 +133,11 @@ export function App() {
   };
 
   // Calculate high-level summary metrics
-  const totalSpending = transactions
+  const totalSpending = (transactions || [])
     .filter((t) => !t.isIncome)
     .reduce((sum, t) => sum + t.amount, 0);
 
-  const totalIncome = transactions
+  const totalIncome = (transactions || [])
     .filter((t) => t.isIncome)
     .reduce((sum, t) => sum + t.amount, 0);
 

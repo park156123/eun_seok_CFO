@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { SettlementData, IncomeSource, IncomeRecord, ClassificationResult, ExclusionReasonCode, MerchantRule, ExclusionRule, RuleConfidence, Transaction } from '../types';
 import { GlobalMockDataStore } from '../services/dataStore';
-import { SnapshotService, formatMonthKorean, normalizeMonthKey } from '../services/snapshotService';
+import { SnapshotService, formatMonthKorean } from '../services/snapshotService';
+import { normalizeMonthKey, getMonthlyRecordForMonth } from '../utils/monthDataSelectors';
 import { saveMonthlySettlementRecordToFirestore, fetchAllMonthlySettlementRecordsFromFirestore } from '../services/firestoreDataService';
 import { ActiveSessionBanner } from '../components/ActiveSessionBanner';
 import { isConsumerTransaction } from '../utils/consumerExpenseUtils';
@@ -26,11 +27,8 @@ import {
 } from '../data/initialClassificationRules';
 
 const parseYearMonth = (monthStr: string) => {
-  const match = monthStr.match(/(\d{4})년\s*(\d{1,2})월/);
-  if (match) {
-    return { year: parseInt(match[1], 10), month: parseInt(match[2], 10) };
-  }
-  return { year: 2026, month: 6 };
+  const norm = normalizeMonthKey(monthStr);
+  return { year: norm.year, month: norm.month };
 };
 
 const getPrevYearMonth = (year: number, month: number) => {
@@ -137,20 +135,30 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   // Available Months for Settlement (전월 결산 기준)
   const monthList = ['2026년 4월', '2026년 5월', '2026년 6월', '2026년 7월'];
   // Default base settlement month receives global selectedMonth as default initial value
-  const [selectedMonth, setSelectedMonth] = useState<string>(() => formattedSelectedMonth || '2026년 4월');
+  const [selectedMonth, setSelectedMonth] = useState<string>(() =>
+    normalizeMonthKey(formattedSelectedMonth || '2026년 4월').yyyyMm
+  );
 
   // Sync internal selectedMonth state with global SelectedMonthContext
   useEffect(() => {
     if (selectedMonth && setGlobalSelectedMonth) {
-      setGlobalSelectedMonth(selectedMonth);
+      const localNorm = normalizeMonthKey(selectedMonth).yyyyMm;
+      const globalNorm = normalizeMonthKey(formattedSelectedMonth || '').yyyyMm;
+      if (localNorm !== globalNorm) {
+        setGlobalSelectedMonth(localNorm);
+      }
     }
-  }, [selectedMonth, setGlobalSelectedMonth]);
+  }, [selectedMonth, formattedSelectedMonth, setGlobalSelectedMonth]);
 
   useEffect(() => {
-    if (formattedSelectedMonth && formattedSelectedMonth !== selectedMonth) {
-      setSelectedMonth(formattedSelectedMonth);
+    if (formattedSelectedMonth) {
+      const localNorm = normalizeMonthKey(selectedMonth).yyyyMm;
+      const globalNorm = normalizeMonthKey(formattedSelectedMonth).yyyyMm;
+      if (localNorm !== globalNorm) {
+        setSelectedMonth(globalNorm);
+      }
     }
-  }, [formattedSelectedMonth]);
+  }, [formattedSelectedMonth, selectedMonth]);
 
 
   // Accordion state for Step Progress Card (Requirement 11 - Collapsed by default)
@@ -305,6 +313,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   useEffect(() => {
     fetchAllMonthlySettlementRecordsFromFirestore().then((fsRecords) => {
       if (fsRecords && Object.keys(fsRecords).length > 0) {
+        let mergedToSave: Record<string, MonthlySettlementRecord> | null = null;
         setRecordsMap((prev) => {
           const merged = { ...prev };
           Object.entries(fsRecords).forEach(([k, rec]) => {
@@ -313,33 +322,40 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
               merged[norm.yyyyMm] = rec;
             }
           });
-          try {
-            localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(merged));
-            GlobalMockDataStore.notifyListeners();
-          } catch (e) {
-            console.error(e);
-          }
+          mergedToSave = merged;
           return merged;
         });
+
+        if (mergedToSave) {
+          try {
+            localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(mergedToSave));
+          } catch (e) {
+            console.warn('Failed to save firestore monthly records to local', e);
+          }
+          (GlobalMockDataStore as any).notifyListeners();
+        }
       }
     }).catch((e) => console.warn('MonthlySettlementScreen: Firestore sync failed', e));
   }, []);
 
   // Current selected month record
   const normSelectedMonth = normalizeMonthKey(selectedMonth);
-  const currentRecord =
+  const rawRecord =
     recordsMap[normSelectedMonth.yyyyMm] ||
     recordsMap[selectedMonth] ||
     recordsMap[normSelectedMonth.formattedMonth] ||
-    getMonthlyRecordForMonth(selectedMonth) || {
-      month: normSelectedMonth.yyyyMm,
-      status: '미시작',
-      currentStep: 1,
-      incomes: getInitialIncomes(),
-      savingsInvestments: [],
-      csvUploaded: false,
-      transactions: [],
-    };
+    getMonthlyRecordForMonth(selectedMonth);
+
+  const currentRecord = {
+    month: normSelectedMonth.yyyyMm,
+    status: rawRecord?.status || '미시작',
+    currentStep: rawRecord?.currentStep || 1,
+    csvUploaded: Boolean(rawRecord?.csvUploaded),
+    ...rawRecord,
+    incomes: Array.isArray(rawRecord?.incomes) ? rawRecord.incomes : getInitialIncomes(),
+    savingsInvestments: Array.isArray(rawRecord?.savingsInvestments) ? rawRecord.savingsInvestments : [],
+    transactions: Array.isArray(rawRecord?.transactions) ? rawRecord.transactions : [],
+  };
 
   // Expanded breakdown card state
   const [expandedCard, setExpandedCard] = useState<'none' | 'living' | 'financial' | 'debt' | 'savings'>('none');
@@ -374,6 +390,9 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   // Helper mutation
   const updateCurrentRecord = (updater: (prev: MonthlySettlementRecord) => MonthlySettlementRecord) => {
     const normMonth = normalizeMonthKey(selectedMonth).yyyyMm;
+    let nextUpdated: MonthlySettlementRecord | null = null;
+    let nextMap: Record<string, MonthlySettlementRecord> | null = null;
+
     setRecordsMap((prev) => {
       const rec = prev[normMonth] || prev[selectedMonth] || {
         month: normMonth,
@@ -385,19 +404,23 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
         transactions: [],
       };
       const updated = updater(rec);
-      const nextMap = {
+      nextUpdated = updated;
+      nextMap = {
         ...prev,
         [normMonth]: updated,
       };
+      return nextMap;
+    });
+
+    if (nextMap && nextUpdated) {
       try {
         localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(nextMap));
-        saveMonthlySettlementRecordToFirestore(normMonth, updated);
-        GlobalMockDataStore.notifyListeners();
+        saveMonthlySettlementRecordToFirestore(normMonth, nextUpdated);
+        (GlobalMockDataStore as any).notifyListeners();
       } catch (e) {
         console.error(e);
       }
-      return nextMap;
-    });
+    }
   };
 
   // Selected settlement year & month
@@ -528,9 +551,14 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
     return false;
   };
 
+  const getMonthIndex = (mStr: string) => {
+    const norm = normalizeMonthKey(mStr).yyyyMm;
+    return monthList.findIndex((m) => normalizeMonthKey(m).yyyyMm === norm);
+  };
+
   // Month Switchers with unsaved changes check
   const handlePrevMonth = () => {
-    const idx = monthList.indexOf(selectedMonth);
+    const idx = getMonthIndex(selectedMonth);
     if (idx > 0) {
       const targetMonth = monthList[idx - 1];
       if (checkHasUnsavedChanges(currentYear, currentMonth)) {
@@ -542,8 +570,8 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   };
 
   const handleNextMonth = () => {
-    const idx = monthList.indexOf(selectedMonth);
-    if (idx < monthList.length - 1) {
+    const idx = getMonthIndex(selectedMonth);
+    if (idx >= 0 && idx < monthList.length - 1) {
       const targetMonth = monthList[idx + 1];
       if (checkHasUnsavedChanges(currentYear, currentMonth)) {
         setPendingMonthSwitch(targetMonth);
@@ -1194,11 +1222,11 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   }));
 
   // Opening Snapshot & Debt Interest Calculation
-  const monthKey = normalizeMonthKey(currentRecord.month || selectedMonth || '2026-04');
+  const monthKey = normalizeMonthKey(currentRecord.month || selectedMonth || '2026-04').yyyyMm;
   const snapshotStatus = SnapshotService.getOpeningSnapshotStatus(monthKey);
   const financialCostResult = calculateMonthFinancialCost(monthKey);
   const hasConfirmedOpeningForMonth = financialCostResult.hasSnapshot;
-  const snapshotDebtsForMonth = SnapshotService.getDebtSnapshotsByMonth(monthKey).filter((d) => d.isIncluded !== false);
+  const snapshotDebtsForMonth = (SnapshotService.getDebtSnapshotsByMonth(monthKey) || []).filter((d) => d.isIncluded !== false);
   const interestBreakdownList = financialCostResult.items;
 
   // Check if locked settlement has 0 or uncalculated financial cost due to prior snapshot lookup error
@@ -1375,7 +1403,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
         <div className="flex items-center gap-2">
           <button
             onClick={handlePrevMonth}
-            disabled={monthList.indexOf(selectedMonth) === 0}
+            disabled={getMonthIndex(selectedMonth) <= 0}
             className="p-1.5 rounded-xl text-[#757682] hover:bg-[#f0f4fd] hover:text-[#00236f] disabled:opacity-30 disabled:hover:bg-transparent transition-all cursor-pointer"
           >
             <span className="material-symbols-outlined text-xl">chevron_left</span>
@@ -1383,7 +1411,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
 
           <div className="text-center">
             <span className="font-dohyeon text-lg text-[#00236f] block">
-              {selectedMonth} 결산
+              {normalizeMonthKey(selectedMonth).formattedMonth} 결산
             </span>
             <span className="text-[10px] text-[#757682] font-medium block -mt-1">
               (전월 결산 기준)
@@ -1392,7 +1420,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
 
           <button
             onClick={handleNextMonth}
-            disabled={monthList.indexOf(selectedMonth) === monthList.length - 1}
+            disabled={getMonthIndex(selectedMonth) >= monthList.length - 1 || getMonthIndex(selectedMonth) === -1}
             className="p-1.5 rounded-xl text-[#757682] hover:bg-[#f0f4fd] hover:text-[#00236f] disabled:opacity-30 disabled:hover:bg-transparent transition-all cursor-pointer"
           >
             <span className="material-symbols-outlined text-xl">chevron_right</span>

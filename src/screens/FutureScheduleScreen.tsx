@@ -50,7 +50,7 @@ export const FutureScheduleScreen: React.FC<FutureScheduleScreenProps> = ({
   const [extendReason, setExtendReason] = useState('');
 
   // Filter schedules by selected category
-  const filteredSchedules = schedules.filter((sch) => {
+  const filteredSchedules = (schedules || []).filter((sch) => {
     if (filter === 'all') return true;
     return getEffectiveScheduleCategory(sch) === filter;
   });
