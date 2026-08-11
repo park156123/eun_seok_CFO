@@ -3,7 +3,7 @@ import { SettlementData, IncomeSource, IncomeRecord, ClassificationResult, Exclu
 import { GlobalMockDataStore } from '../services/dataStore';
 import { SnapshotService, formatMonthKorean } from '../services/snapshotService';
 import { normalizeMonthKey, getMonthlyRecordForMonth } from '../utils/monthDataSelectors';
-import { saveMonthlySettlementRecordToFirestore, fetchAllMonthlySettlementRecordsFromFirestore } from '../services/firestoreDataService';
+import { saveMonthlySettlementRecordToFirestore, fetchAllMonthlySettlementRecordsFromFirestore, saveSpecialNotesToFirestore } from '../services/firestoreDataService';
 import { ActiveSessionBanner } from '../components/ActiveSessionBanner';
 import { isConsumerTransaction } from '../utils/consumerExpenseUtils';
 import { useSelectedMonth } from '../context/SelectedMonthContext';
@@ -116,9 +116,137 @@ export interface MonthlySettlementRecord {
   totalOutflow?: number;
   netCashFlow?: number;
   specialNotes?: string;
+  noteConfirmedAt?: string;
   completedAtDate?: string; // e.g., "2026.07.02"
   completedAtTime?: string; // e.g., "21:14"
 }
+
+interface SpecialNotesSectionProps {
+  selectedMonth: string;
+  currentRecord: MonthlySettlementRecord;
+  onNotesSaved: (normMonth: string, notes: string, confirmedAt: string) => void;
+}
+
+const SpecialNotesSection: React.FC<SpecialNotesSectionProps> = ({
+  selectedMonth,
+  currentRecord,
+  onNotesSaved,
+}) => {
+  const normMonth = normalizeMonthKey(selectedMonth).yyyyMm;
+  const initialNotes = currentRecord?.specialNotes || '';
+  const initialConfirmedAt = currentRecord?.noteConfirmedAt || null;
+
+  const [draftNotes, setDraftNotes] = useState<string>(initialNotes);
+  const [savedNotes, setSavedNotes] = useState<string>(initialNotes);
+  const [confirmedAt, setConfirmedAt] = useState<string | null>(initialConfirmedAt);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Sync draftNotes & savedNotes when selectedMonth or currentRecord's specialNotes/noteConfirmedAt changes
+  useEffect(() => {
+    const notes = currentRecord?.specialNotes || '';
+    const timeAt = currentRecord?.noteConfirmedAt || null;
+    setDraftNotes(notes);
+    setSavedNotes(notes);
+    setConfirmedAt(timeAt);
+    setSaveError(null);
+  }, [selectedMonth, currentRecord?.specialNotes, currentRecord?.noteConfirmedAt]);
+
+  const isDirty = draftNotes !== savedNotes;
+
+  const handleSave = async () => {
+    if (isSaving) return;
+    setIsSaving(true);
+    setSaveError(null);
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const timestampStr = `${year}.${month}.${day} ${hours}:${minutes}`;
+
+    try {
+      await saveSpecialNotesToFirestore(normMonth, draftNotes, timestampStr);
+      setSavedNotes(draftNotes);
+      setConfirmedAt(timestampStr);
+      setIsSaving(false);
+      onNotesSaved(normMonth, draftNotes, timestampStr);
+    } catch (err: any) {
+      console.error('Failed to save special notes to Firestore:', err);
+      setSaveError(err?.message || 'Firestore 저장 중 오류가 발생했습니다.');
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <section className="bg-white p-5 rounded-2xl border border-[#c5c5d3]/30 shadow-xs space-y-3">
+      <div className="flex items-center justify-between border-b border-[#eceef0] pb-2.5">
+        <div className="flex items-center gap-2">
+          <span className="material-symbols-outlined text-lg text-[#00236f]">edit_note</span>
+          <div>
+            <h3 className="font-dohyeon text-base text-[#00236f]">이번 달 특이사항</h3>
+            <p className="text-[11px] text-[#757682]">
+              이번 달 숫자가 평소와 달라진 이유나 중요한 자금 흐름을 기록해 두세요
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <textarea
+        value={draftNotes}
+        onChange={(e) => {
+          setDraftNotes(e.target.value);
+          setSaveError(null);
+        }}
+        placeholder={`예: 현하우스 임차보증금 입금,\n신규 스타일리스트 입사로 매출 증가,\n증가한 현금으로 차입금 원금 상환`}
+        className="w-full p-3.5 bg-[#f8f9fc] border border-[#e1e2ec] rounded-xl text-xs text-[#191c1e] placeholder-[#a4a5b2] focus:outline-none focus:border-[#00236f] focus:bg-white focus:ring-1 focus:ring-[#00236f] transition-all resize-none min-h-[90px] leading-relaxed"
+        rows={3}
+      />
+
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 pt-1">
+        <div className="text-xs">
+          {isSaving ? (
+            <span className="text-[#00236f] font-medium flex items-center gap-1">
+              <span className="material-symbols-outlined text-sm animate-spin">sync</span>
+              저장 중...
+            </span>
+          ) : saveError ? (
+            <span className="text-[#dc2626] font-medium flex items-center gap-1">
+              <span className="material-symbols-outlined text-sm">error</span>
+              저장 실패 ({saveError})
+            </span>
+          ) : isDirty ? (
+            <span className="text-[#d97706] font-medium flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-[#d97706] animate-pulse"></span>
+              ● 저장되지 않은 변경사항
+            </span>
+          ) : savedNotes.trim() !== '' || confirmedAt ? (
+            <span className="text-[#006c49] font-medium flex items-center gap-1">
+              <span className="material-symbols-outlined text-sm">check_circle</span>
+              ✓ 저장됨{confirmedAt ? ` (${confirmedAt})` : ''}
+            </span>
+          ) : (
+            <span className="text-[#757682]">작성 후 [특이사항 저장] 버튼을 누르면 Firestore에 영구 저장됩니다.</span>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={isSaving}
+          className="px-4 py-2 bg-[#00236f] hover:bg-[#1e3a8a] text-white text-xs font-dohyeon rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+        >
+          <span className="material-symbols-outlined text-base">
+            {isSaving ? 'sync' : 'save'}
+          </span>
+          {isSaving ? '저장 중...' : '특이사항 저장'}
+        </button>
+      </div>
+    </section>
+  );
+};
 
 interface MonthlySettlementScreenProps {
   onImportCSV?: (csvText: string) => void;
@@ -293,10 +421,10 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
         ],
         livingExpense: 8765098,
         financialCost: 8475400,
-        principalRepayment: 20000000,
+        principalRepayment: 21330000,
         totalIncome: 36260000,
-        totalCashOutflow: 38240498,
-        netCashFlow: -1980498,
+        totalCashOutflow: 39570498,
+        netCashFlow: -3310498,
         csvUploaded: true,
         csvFileName: '2026-04_거래내역.csv',
         csvTotalCount: 42,
@@ -354,7 +482,9 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
     ...rawRecord,
     incomes: Array.isArray(rawRecord?.incomes) ? rawRecord.incomes : getInitialIncomes(),
     savingsInvestments: Array.isArray(rawRecord?.savingsInvestments) ? rawRecord.savingsInvestments : [],
-    transactions: Array.isArray(rawRecord?.transactions) ? rawRecord.transactions : [],
+    transactions: Array.isArray(rawRecord?.transactions) && rawRecord.transactions.length > 0
+      ? rawRecord.transactions
+      : (GlobalMockDataStore.getOtherSettings()?.transactions || []),
   };
 
   // Expanded breakdown card state
@@ -421,6 +551,36 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
         console.error(e);
       }
     }
+  };
+
+  const handleNotesSaved = (normMonth: string, notes: string, confirmedAt: string) => {
+    setRecordsMap((prev) => {
+      const rec = prev[normMonth] || prev[selectedMonth] || {
+        month: normMonth,
+        status: '미시작',
+        currentStep: 1,
+        incomes: getInitialIncomes(),
+        savingsInvestments: [],
+        csvUploaded: false,
+        transactions: [],
+      };
+      const updated: MonthlySettlementRecord = {
+        ...rec,
+        specialNotes: notes,
+        noteConfirmedAt: confirmedAt,
+      };
+      const nextMap = {
+        ...prev,
+        [normMonth]: updated,
+      };
+      try {
+        localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(nextMap));
+      } catch (e) {
+        console.error(e);
+      }
+      return nextMap;
+    });
+    (GlobalMockDataStore as any).notifyListeners();
   };
 
   // Selected settlement year & month
@@ -1497,32 +1657,12 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
             </div>
           </section>
 
-          {/* ② 이번 달 특이사항 Card (New) */}
-          <section className="bg-white p-5 rounded-2xl border border-[#c5c5d3]/30 shadow-xs space-y-3">
-            <div className="flex items-center gap-2 border-b border-[#eceef0] pb-2.5">
-              <span className="material-symbols-outlined text-lg text-[#00236f]">edit_note</span>
-              <div>
-                <h3 className="font-dohyeon text-base text-[#00236f]">이번 달 특이사항</h3>
-                <p className="text-[11px] text-[#757682]">
-                  이번 달 숫자가 평소와 달라진 이유나 중요한 자금 흐름을 기록해 두세요
-                </p>
-              </div>
-            </div>
-
-            <textarea
-              value={currentRecord.specialNotes || ''}
-              onChange={(e) => {
-                const val = e.target.value;
-                updateCurrentRecord((prev) => ({
-                  ...prev,
-                  specialNotes: val,
-                }));
-              }}
-              placeholder={`예: 현하우스 임차보증금 입금,\n신규 스타일리스트 입사로 매출 증가,\n증가한 현금으로 차입금 원금 상환`}
-              className="w-full p-3.5 bg-[#f8f9fc] border border-[#e1e2ec] rounded-xl text-xs text-[#191c1e] placeholder-[#a4a5b2] focus:outline-none focus:border-[#00236f] focus:bg-white focus:ring-1 focus:ring-[#00236f] transition-all resize-none min-h-[90px] leading-relaxed"
-              rows={3}
-            />
-          </section>
+          {/* ② 이번 달 특이사항 Card */}
+          <SpecialNotesSection
+            selectedMonth={selectedMonth}
+            currentRecord={currentRecord}
+            onNotesSaved={handleNotesSaved}
+          />
 
           {/* Requirement 3 & 4: 4개 핵심 항목 카드 확장/접힘 UI 및 근거 추적 */}
           <section className="space-y-3 text-xs">
@@ -3760,31 +3900,11 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
               </div>
 
               {/* 이번 달 특이사항 Card in Step 5 */}
-              <div className="bg-white p-5 rounded-2xl border border-[#c5c5d3]/30 shadow-xs space-y-3">
-                <div className="flex items-center gap-2 border-b border-[#eceef0] pb-2.5">
-                  <span className="material-symbols-outlined text-lg text-[#00236f]">edit_note</span>
-                  <div>
-                    <h3 className="font-dohyeon text-base text-[#00236f]">이번 달 특이사항</h3>
-                    <p className="text-[11px] text-[#757682]">
-                      이번 달 숫자가 평소와 달라진 이유나 중요한 자금 흐름을 기록해 두세요
-                    </p>
-                  </div>
-                </div>
-
-                <textarea
-                  value={currentRecord.specialNotes || ''}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    updateCurrentRecord((prev) => ({
-                      ...prev,
-                      specialNotes: val,
-                    }));
-                  }}
-                  placeholder={`예: 현하우스 임차보증금 입금,\n신규 스타일리스트 입사로 매출 증가,\n증가한 현금으로 차입금 원금 상환`}
-                  className="w-full p-3.5 bg-[#f8f9fc] border border-[#e1e2ec] rounded-xl text-xs text-[#191c1e] placeholder-[#a4a5b2] focus:outline-none focus:border-[#00236f] focus:bg-white focus:ring-1 focus:ring-[#00236f] transition-all resize-none min-h-[90px] leading-relaxed"
-                  rows={3}
-                />
-              </div>
+              <SpecialNotesSection
+                selectedMonth={selectedMonth}
+                currentRecord={currentRecord}
+                onNotesSaved={handleNotesSaved}
+              />
 
               {/* Requirement 9: 안내문 */}
               <div className="bg-[#fff7ed] p-3.5 rounded-xl border border-[#ffedd5] flex items-start gap-2.5 text-xs text-[#c2410c]">

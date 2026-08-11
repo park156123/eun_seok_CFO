@@ -369,39 +369,41 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
             );
 
             const rate =
-              masterMatch?.interestRate !== undefined && masterMatch?.interestRate !== null
-                ? Number(masterMatch.interestRate)
-                : d.interestRate !== undefined && d.interestRate !== null
+              d.interestRate !== undefined && d.interestRate !== null
                 ? Number(d.interestRate)
+                : masterMatch?.interestRate !== undefined && masterMatch?.interestRate !== null
+                ? Number(masterMatch.interestRate)
                 : undefined;
 
             const rep =
-              masterMatch?.repaymentMethod ||
               d.repaymentMethod ||
               d.debtTypeSnapshot ||
+              masterMatch?.repaymentMethod ||
               undefined;
 
             const day =
-              masterMatch?.paymentDay !== undefined && masterMatch?.paymentDay !== null
-                ? Number(masterMatch.paymentDay)
-                : d.paymentDay !== undefined && d.paymentDay !== null
+              d.paymentDay !== undefined && d.paymentDay !== null
                 ? Number(d.paymentDay)
+                : masterMatch?.paymentDay !== undefined && masterMatch?.paymentDay !== null
+                ? Number(masterMatch.paymentDay)
                 : undefined;
 
             const creditor =
-              masterMatch?.creditor ||
               d.creditorNameSnapshot ||
               d.creditor ||
+              masterMatch?.creditor ||
               undefined;
 
             const refPrin =
-              hasPrevConfirmed && prevDebt
+              d.refPrincipal !== undefined
+                ? Number(d.refPrincipal)
+                : hasPrevConfirmed && prevDebt
                 ? prevDebt.endingPrincipal !== undefined
                   ? Number(prevDebt.endingPrincipal)
                   : Number(prevDebt.openingPrincipal) || 0
                 : masterMatch
                 ? masterMatch.refPrincipal
-                : 0;
+                : Number(d.openingPrincipal) || 0;
 
             return {
               id: d.id || d.linkedDebtId || `debt-${Date.now()}`,
@@ -665,29 +667,29 @@ export const OpeningSnapshotModal: React.FC<OpeningSnapshotModalProps> = ({
           const restoredDebts: DebtItemState[] = snap.debts.map((d: any) => {
             const masterMatch = mastersD.find((md) => md.id === (d.linkedDebtId || d.id));
             const rate =
-              masterMatch?.interestRate !== undefined && masterMatch?.interestRate !== null
-                ? Number(masterMatch.interestRate)
-                : d.interestRate !== undefined && d.interestRate !== null
+              d.interestRate !== undefined && d.interestRate !== null
                 ? Number(d.interestRate)
+                : masterMatch?.interestRate !== undefined && masterMatch?.interestRate !== null
+                ? Number(masterMatch.interestRate)
                 : undefined;
 
             const rep =
-              masterMatch?.repaymentMethod ||
               d.repaymentMethod ||
               d.debtTypeSnapshot ||
+              masterMatch?.repaymentMethod ||
               undefined;
 
             const day =
-              masterMatch?.paymentDay !== undefined && masterMatch?.paymentDay !== null
-                ? Number(masterMatch.paymentDay)
-                : d.paymentDay !== undefined && d.paymentDay !== null
+              d.paymentDay !== undefined && d.paymentDay !== null
                 ? Number(d.paymentDay)
+                : masterMatch?.paymentDay !== undefined && masterMatch?.paymentDay !== null
+                ? Number(masterMatch.paymentDay)
                 : undefined;
 
             const creditor =
-              masterMatch?.creditor ||
               d.creditorNameSnapshot ||
               d.creditor ||
+              masterMatch?.creditor ||
               undefined;
 
             return {

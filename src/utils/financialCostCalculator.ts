@@ -106,20 +106,20 @@ export function calculateMonthFinancialCost(
         : undefined;
 
     const snapshotRate = d.interestRate !== undefined && d.interestRate !== null ? Number(d.interestRate) : undefined;
-    const rate = masterRate !== undefined ? masterRate : (snapshotRate !== undefined ? snapshotRate : 0);
+    const rate = snapshotRate !== undefined ? snapshotRate : (masterRate !== undefined ? masterRate : 0);
 
     const hasRate = rate > 0;
     const monthlyInterest = calculateMonthlyInterest(principal, rate);
 
-    const name = d.debtNameSnapshot || master?.debtName || master?.name || '부채';
-    const creditor = master?.creditorName || master?.creditor || master?.lender || d.creditorNameSnapshot || '금융기관';
+    const name = d.debtNameSnapshot || (d as any).name || master?.debtName || master?.name || '부채';
+    const creditor = d.creditorNameSnapshot || (d as any).creditor || master?.creditorName || master?.creditor || master?.lender || '금융기관';
     const repaymentMethod =
+      d.repaymentMethod ||
+      d.debtTypeSnapshot ||
       master?.repaymentMethod ||
       master?.repaymentType ||
       master?.paymentType ||
       master?.rateType ||
-      d.repaymentMethod ||
-      d.debtTypeSnapshot ||
       '원리금상환';
 
     const sourceTag = master

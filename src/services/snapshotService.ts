@@ -150,7 +150,7 @@ export const enrichDebtSnapshot = (d: DebtSnapshot): DebtSnapshot => {
       : undefined;
 
   const snapshotRate = d.interestRate !== undefined && d.interestRate !== null ? Number(d.interestRate) : undefined;
-  const interestRate = masterRate !== undefined ? masterRate : snapshotRate;
+  const interestRate = snapshotRate !== undefined ? snapshotRate : masterRate;
 
   const masterRepayment =
     master?.repaymentMethod ||
@@ -161,9 +161,9 @@ export const enrichDebtSnapshot = (d: DebtSnapshot): DebtSnapshot => {
     master?.method;
 
   const repaymentMethod =
-    masterRepayment ||
     d.repaymentMethod ||
     d.debtTypeSnapshot ||
+    masterRepayment ||
     undefined;
 
   const masterDay = master
@@ -177,10 +177,11 @@ export const enrichDebtSnapshot = (d: DebtSnapshot): DebtSnapshot => {
       )
     : undefined;
 
-  const paymentDay = masterDay !== undefined ? masterDay : parsePaymentDay(d.paymentDay);
+  const snapshotDay = parsePaymentDay(d.paymentDay);
+  const paymentDay = snapshotDay !== undefined ? snapshotDay : masterDay;
 
   const masterCreditor = master?.creditorName || master?.creditor || master?.lender;
-  const creditorNameSnapshot = masterCreditor || d.creditorNameSnapshot || undefined;
+  const creditorNameSnapshot = d.creditorNameSnapshot || masterCreditor || undefined;
 
   return {
     ...d,
@@ -268,21 +269,21 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     id: 'dbt-snap-2026-04-1',
     monthlySnapshotId: 'opening-2026-04',
     month: '2026-04',
-    debtId: 'dbt-1',
-    linkedDebtId: 'dbt-1',
+    debtId: 'dbt-1785069521240',
+    linkedDebtId: 'dbt-1785069521240',
     debtNameSnapshot: '현하우스',
-    debtTypeSnapshot: '임대보증금',
-    creditorNameSnapshot: '임차인',
+    debtTypeSnapshot: '만기일시상환',
+    creditorNameSnapshot: '국민은행',
     openingPrincipal: 787500000,
     endingPrincipal: 787500000,
     debtBalanceSnapshot: 787500000,
     scheduledPrincipalRepayment: 0,
     actualPrincipalRepayment: 0,
     additionalBorrowing: 0,
-    interestExpense: 0,
-    interestRate: 0,
-    repaymentMethod: '원리금상환',
-    paymentDay: 1,
+    interestExpense: 2821875,
+    interestRate: 4.3,
+    repaymentMethod: '만기일시상환',
+    paymentDay: 20,
     statusAtMonthEnd: 'active',
     source: 'user-input',
     isHistoricalOnly: false,
@@ -294,21 +295,21 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     id: 'dbt-snap-2026-04-2',
     monthlySnapshotId: 'opening-2026-04',
     month: '2026-04',
-    debtId: 'dbt-2',
-    linkedDebtId: 'dbt-2',
+    debtId: 'dbt-1785071872327',
+    linkedDebtId: 'dbt-1785071872327',
     debtNameSnapshot: '금강 담보대출',
-    debtTypeSnapshot: '원리금상환',
-    creditorNameSnapshot: '하나은행',
+    debtTypeSnapshot: '원금균등',
+    creditorNameSnapshot: '농협은행',
     openingPrincipal: 401520000,
     endingPrincipal: 401520000,
     debtBalanceSnapshot: 401520000,
-    scheduledPrincipalRepayment: 0,
-    actualPrincipalRepayment: 0,
+    scheduledPrincipalRepayment: 1330000,
+    actualPrincipalRepayment: 1330000,
     additionalBorrowing: 0,
-    interestExpense: 1271480,
-    interestRate: 3.8,
-    repaymentMethod: '원리금상환',
-    paymentDay: 25,
+    interestExpense: 1415358,
+    interestRate: 4.23,
+    repaymentMethod: '원금균등',
+    paymentDay: 2,
     statusAtMonthEnd: 'active',
     source: 'user-input',
     isHistoricalOnly: false,
@@ -320,21 +321,21 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     id: 'dbt-snap-2026-04-3',
     monthlySnapshotId: 'opening-2026-04',
     month: '2026-04',
-    debtId: 'dbt-3',
-    linkedDebtId: 'dbt-3',
+    debtId: 'dbt-1785072013230',
+    linkedDebtId: 'dbt-1785072013230',
     debtNameSnapshot: '은석리더스',
-    debtTypeSnapshot: '임대보증금',
-    creditorNameSnapshot: '임차인',
+    debtTypeSnapshot: '만기일시상환',
+    creditorNameSnapshot: '국민은행',
     openingPrincipal: 660000000,
     endingPrincipal: 660000000,
     debtBalanceSnapshot: 660000000,
     scheduledPrincipalRepayment: 0,
     actualPrincipalRepayment: 0,
     additionalBorrowing: 0,
-    interestExpense: 0,
-    interestRate: 0,
+    interestExpense: 2205500,
+    interestRate: 4.01,
     repaymentMethod: '만기일시상환',
-    paymentDay: 1,
+    paymentDay: 5,
     statusAtMonthEnd: 'active',
     source: 'user-input',
     isHistoricalOnly: false,
@@ -346,10 +347,10 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     id: 'dbt-snap-2026-04-4',
     monthlySnapshotId: 'opening-2026-04',
     month: '2026-04',
-    debtId: 'dbt-4',
-    linkedDebtId: 'dbt-4',
+    debtId: 'dbt-1785072154485',
+    linkedDebtId: 'dbt-1785072154485',
     debtNameSnapshot: '개인_마통',
-    debtTypeSnapshot: '신용대출',
+    debtTypeSnapshot: '만기일시상환',
     creditorNameSnapshot: '국민은행',
     openingPrincipal: 25000000,
     endingPrincipal: 25000000,
@@ -357,10 +358,10 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     scheduledPrincipalRepayment: 0,
     actualPrincipalRepayment: 0,
     additionalBorrowing: 0,
-    interestExpense: 114583,
-    interestRate: 5.5,
+    interestExpense: 124167,
+    interestRate: 5.96,
     repaymentMethod: '만기일시상환',
-    paymentDay: 10,
+    paymentDay: 26,
     statusAtMonthEnd: 'active',
     source: 'user-input',
     isHistoricalOnly: false,
@@ -372,10 +373,10 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     id: 'dbt-snap-2026-04-5',
     monthlySnapshotId: 'opening-2026-04',
     month: '2026-04',
-    debtId: 'dbt-5',
-    linkedDebtId: 'dbt-5',
+    debtId: 'dbt-1785072248492',
+    linkedDebtId: 'dbt-1785072248492',
     debtNameSnapshot: '플라워1',
-    debtTypeSnapshot: '사업자대출',
+    debtTypeSnapshot: '만기일시상환',
     creditorNameSnapshot: '국민은행',
     openingPrincipal: 100000000,
     endingPrincipal: 100000000,
@@ -383,10 +384,10 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     scheduledPrincipalRepayment: 0,
     actualPrincipalRepayment: 0,
     additionalBorrowing: 0,
-    interestExpense: 308333,
-    interestRate: 3.7,
-    repaymentMethod: '원금균등',
-    paymentDay: 21,
+    interestExpense: 370833,
+    interestRate: 4.45,
+    repaymentMethod: '만기일시상환',
+    paymentDay: 20,
     statusAtMonthEnd: 'active',
     source: 'user-input',
     isHistoricalOnly: false,
@@ -398,10 +399,10 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     id: 'dbt-snap-2026-04-6',
     monthlySnapshotId: 'opening-2026-04',
     month: '2026-04',
-    debtId: 'dbt-6',
-    linkedDebtId: 'dbt-6',
+    debtId: 'dbt-1785072439934',
+    linkedDebtId: 'dbt-1785072439934',
     debtNameSnapshot: '플라워2',
-    debtTypeSnapshot: '사업자대출',
+    debtTypeSnapshot: '원금균등',
     creditorNameSnapshot: '국민은행',
     openingPrincipal: 100000000,
     endingPrincipal: 100000000,
@@ -424,10 +425,10 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     id: 'dbt-snap-2026-04-7',
     monthlySnapshotId: 'opening-2026-04',
     month: '2026-04',
-    debtId: 'dbt-7',
-    linkedDebtId: 'dbt-7',
+    debtId: 'dbt-1785073006194',
+    linkedDebtId: 'dbt-1785073006194',
     debtNameSnapshot: '본점1',
-    debtTypeSnapshot: '사업자대출',
+    debtTypeSnapshot: '만기일시상환',
     creditorNameSnapshot: '국민은행',
     openingPrincipal: 100000000,
     endingPrincipal: 100000000,
@@ -435,9 +436,9 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     scheduledPrincipalRepayment: 0,
     actualPrincipalRepayment: 0,
     additionalBorrowing: 0,
-    interestExpense: 290000,
-    interestRate: 3.48,
-    repaymentMethod: '원금균등',
+    interestExpense: 401667,
+    interestRate: 4.82,
+    repaymentMethod: '만기일시상환',
     paymentDay: 25,
     statusAtMonthEnd: 'active',
     source: 'user-input',
@@ -450,10 +451,10 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     id: 'dbt-snap-2026-04-8',
     monthlySnapshotId: 'opening-2026-04',
     month: '2026-04',
-    debtId: 'dbt-8',
-    linkedDebtId: 'dbt-8',
+    debtId: 'dbt-1785073058778',
+    linkedDebtId: 'dbt-1785073058778',
     debtNameSnapshot: '본점2',
-    debtTypeSnapshot: '사업자대출',
+    debtTypeSnapshot: '만기일시상환',
     creditorNameSnapshot: '국민은행',
     openingPrincipal: 140000000,
     endingPrincipal: 140000000,
@@ -461,9 +462,9 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     scheduledPrincipalRepayment: 0,
     actualPrincipalRepayment: 0,
     additionalBorrowing: 0,
-    interestExpense: 406000,
-    interestRate: 3.48,
-    repaymentMethod: '원금균등',
+    interestExpense: 591500,
+    interestRate: 5.07,
+    repaymentMethod: '만기일시상환',
     paymentDay: 25,
     statusAtMonthEnd: 'active',
     source: 'user-input',
@@ -476,10 +477,10 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     id: 'dbt-snap-2026-04-9',
     monthlySnapshotId: 'opening-2026-04',
     month: '2026-04',
-    debtId: 'dbt-9',
-    linkedDebtId: 'dbt-9',
+    debtId: 'dbt-1785073164714',
+    linkedDebtId: 'dbt-1785073164714',
     debtNameSnapshot: '본점3',
-    debtTypeSnapshot: '사업자대출',
+    debtTypeSnapshot: '원금균등',
     creditorNameSnapshot: '국민은행',
     openingPrincipal: 80000000,
     endingPrincipal: 80000000,
@@ -502,10 +503,10 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     id: 'dbt-snap-2026-04-10',
     monthlySnapshotId: 'opening-2026-04',
     month: '2026-04',
-    debtId: 'dbt-10',
-    linkedDebtId: 'dbt-10',
+    debtId: 'dbt-1785073298651',
+    linkedDebtId: 'dbt-1785073298651',
     debtNameSnapshot: '광주엄니',
-    debtTypeSnapshot: '가족·지인 차입금',
+    debtTypeSnapshot: '원금균등',
     creditorNameSnapshot: '광주엄니',
     openingPrincipal: 40000000,
     endingPrincipal: 40000000,
@@ -528,10 +529,10 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     id: 'dbt-snap-2026-04-11',
     monthlySnapshotId: 'opening-2026-04',
     month: '2026-04',
-    debtId: 'dbt-11',
-    linkedDebtId: 'dbt-11',
+    debtId: 'dbt-1785073707662',
+    linkedDebtId: 'dbt-1785073707662',
     debtNameSnapshot: '큰이모',
-    debtTypeSnapshot: '가족·지인 차입금',
+    debtTypeSnapshot: '만기일시상환',
     creditorNameSnapshot: '큰이모',
     openingPrincipal: 60000000,
     endingPrincipal: 60000000,
@@ -557,7 +558,7 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     debtId: 'dbt-12',
     linkedDebtId: 'dbt-12',
     debtNameSnapshot: '재호',
-    debtTypeSnapshot: '가족·지인 차입금',
+    debtTypeSnapshot: '개인차입금',
     creditorNameSnapshot: '재호',
     openingPrincipal: 15000000,
     endingPrincipal: 15000000,
@@ -583,7 +584,7 @@ const OFFICIAL_2026_04_DEBTS: DebtSnapshot[] = [
     debtId: 'dbt-13',
     linkedDebtId: 'dbt-13',
     debtNameSnapshot: '테스트 부채',
-    debtTypeSnapshot: '기타',
+    debtTypeSnapshot: '만기일시상환',
     creditorNameSnapshot: '테스트',
     openingPrincipal: 1000000,
     endingPrincipal: 1000000,
@@ -670,14 +671,14 @@ const loadSnapshotStore = (): SnapshotStoreState => {
           if (parsed.debtMovements) delete parsed.debtMovements['2026-06'];
         }
 
-        // Check if 2026-04 or 2026-05 has outdated dummy seed data (e.g., '미용실 본점' or missing '은석리더스')
+        // Check if 2026-04 has outdated dummy seed data (e.g., '미용실 본점')
         const current04Assets = parsed.assetSnapshots?.['2026-04'] || [];
         const hasLegacyDummy = current04Assets.some((a: any) =>
           a.assetNameSnapshot === '미용실 본점' || a.assetNameSnapshot === '주식/펀드 (삼성전자)' || a.assetNameSnapshot === '비상금 통장' || a.assetNameSnapshot === '금강아파트'
         ) || !current04Assets.some((a: any) => a.assetNameSnapshot === '은석리더스');
 
-        if (hasLegacyDummy || !parsed.monthlySnapshots['2026-04'] || !parsed.monthlySnapshots['2026-05']) {
-          console.log('[SnapshotService] Outdated or dummy snapshots detected in localStorage. Sanitizing to Official 2026-04/05 Snapshots.');
+        if (!parsed.monthlySnapshots['2026-04'] || (hasLegacyDummy && !parsed.monthlySnapshots['2026-04']?.confirmedAt)) {
+          console.log('[SnapshotService] Outdated or missing 2026-04 snapshot detected. Initializing 2026-04 defaults.');
           parsed.monthlySnapshots['2026-04'] = {
             id: 'opening-2026-04',
             month: '2026-04',
@@ -693,6 +694,14 @@ const loadSnapshotStore = (): SnapshotStoreState => {
             assetSnapshotIds: OFFICIAL_2026_04_ASSETS.map((a) => a.id),
             debtSnapshotIds: OFFICIAL_2026_04_DEBTS.map((d) => d.id),
           };
+          if (!parsed.assetSnapshots) parsed.assetSnapshots = {};
+          if (!parsed.debtSnapshots) parsed.debtSnapshots = {};
+          parsed.assetSnapshots['2026-04'] = [...OFFICIAL_2026_04_ASSETS];
+          parsed.debtSnapshots['2026-04'] = [...OFFICIAL_2026_04_DEBTS];
+        }
+
+        if (!parsed.monthlySnapshots['2026-05']) {
+          console.log('[SnapshotService] Missing 2026-05 snapshot detected. Initializing 2026-05 defaults.');
           parsed.monthlySnapshots['2026-05'] = {
             id: 'opening-2026-05',
             month: '2026-05',
@@ -710,11 +719,8 @@ const loadSnapshotStore = (): SnapshotStoreState => {
           };
 
           if (!parsed.assetSnapshots) parsed.assetSnapshots = {};
-          parsed.assetSnapshots['2026-04'] = [...OFFICIAL_2026_04_ASSETS];
-          parsed.assetSnapshots['2026-05'] = [...OFFICIAL_2026_05_ASSETS];
-
           if (!parsed.debtSnapshots) parsed.debtSnapshots = {};
-          parsed.debtSnapshots['2026-04'] = [...OFFICIAL_2026_04_DEBTS];
+          parsed.assetSnapshots['2026-05'] = [...OFFICIAL_2026_05_ASSETS];
           parsed.debtSnapshots['2026-05'] = [...OFFICIAL_2026_05_DEBTS];
         }
 
@@ -1069,6 +1075,11 @@ export const SnapshotService = {
     const monthKey = normalizeMonthKey(monthInput);
     const debts = state.debtSnapshots[monthKey];
     if (debts && debts.length > 0) {
+      const snap = state.monthlySnapshots[monthKey];
+      if (snap && snap.status === 'confirmed') {
+        // FINAL: confirmed Snapshot returns RAW directly without enrichDebtSnapshot/Master fallbacks
+        return debts;
+      }
       return debts.map(enrichDebtSnapshot);
     }
     const prevMonthKey = getPreviousMonthKey(monthKey);
@@ -1089,7 +1100,7 @@ export const SnapshotService = {
         actualPrincipalRepayment: 0,
         additionalBorrowing: 0,
         endingPrincipal: pd.endingPrincipal !== undefined ? Number(pd.endingPrincipal) : Number(pd.openingPrincipal) || 0,
-        interestExpense: 0,
+        interestExpense: pd.interestExpense !== undefined ? Number(pd.interestExpense) : 0,
         interestRate: pd.interestRate,
         repaymentMethod: pd.repaymentMethod || pd.debtTypeSnapshot,
         paymentDay: pd.paymentDay || 1,
@@ -1100,9 +1111,107 @@ export const SnapshotService = {
         isIncluded: pd.isIncluded !== false,
         createdAt: pd.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-      })).map(enrichDebtSnapshot);
+      }));
     }
     return [];
+  },
+
+  /**
+   * FINAL: Creates next month's draft snapshot by deep-copying previous month's confirmed RAW snapshot.
+   * NO Master merge, NO OFFICIAL merge, NO legacy seed merge, NO automatic balance deduction.
+   */
+  createNextMonthSnapshot(
+    prevMonthInput: string | { year: number; month: number },
+    nextMonthInput: string | { year: number; month: number }
+  ): { monthly: MonthlySnapshot; assets: AssetSnapshot[]; debts: DebtSnapshot[] } {
+    const prevMonthKey = normalizeMonthKey(prevMonthInput);
+    const nextMonthKey = normalizeMonthKey(nextMonthInput);
+
+    const prevSnap = state.monthlySnapshots[prevMonthKey];
+    if (!prevSnap || prevSnap.status !== 'confirmed') {
+      throw new Error(`직전 월(${prevMonthKey})의 확정 스냅샷이 존재하지 않습니다.`);
+    }
+
+    const prevAssets = state.assetSnapshots[prevMonthKey] || [];
+    const prevDebts = state.debtSnapshots[prevMonthKey] || [];
+    const nowIso = new Date().toISOString();
+
+    const newAssets: AssetSnapshot[] = prevAssets.map((pa, idx) => ({
+      id: `ass-snap-${nextMonthKey}-${idx + 1}-${Date.now()}`,
+      monthlySnapshotId: `opening-${nextMonthKey}`,
+      month: nextMonthKey,
+      assetId: pa.assetId || (pa as any).linkedAssetId || null,
+      linkedAssetId: (pa as any).linkedAssetId || pa.assetId || null,
+      assetNameSnapshot: pa.assetNameSnapshot,
+      assetTypeSnapshot: pa.assetTypeSnapshot,
+      category: pa.category,
+      subType: pa.subType,
+      value: Number(pa.value) || 0,
+      valuationMethod: pa.valuationMethod || 'Inherited',
+      memo: pa.memo || '',
+      source: 'opening-seed' as const,
+      isHistoricalOnly: pa.isHistoricalOnly,
+      isIncluded: pa.isIncluded !== false,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    }));
+
+    const newDebts: DebtSnapshot[] = prevDebts.map((pd, idx) => {
+      const principalVal = pd.endingPrincipal !== undefined ? Number(pd.endingPrincipal) : Number(pd.openingPrincipal) || 0;
+      return {
+        id: `debt-snap-${nextMonthKey}-${idx + 1}-${Date.now()}`,
+        monthlySnapshotId: `opening-${nextMonthKey}`,
+        month: nextMonthKey,
+        debtId: pd.debtId || pd.linkedDebtId || null,
+        linkedDebtId: pd.linkedDebtId || pd.debtId || null,
+        debtNameSnapshot: pd.debtNameSnapshot,
+        debtTypeSnapshot: pd.debtTypeSnapshot || pd.repaymentMethod || '원리금상환',
+        creditorNameSnapshot: pd.creditorNameSnapshot || '개인/금융',
+        openingPrincipal: principalVal,
+        scheduledPrincipalRepayment: Number(pd.scheduledPrincipalRepayment) || 0,
+        actualPrincipalRepayment: 0,
+        additionalBorrowing: 0,
+        endingPrincipal: principalVal,
+        interestExpense: pd.interestExpense !== undefined ? Number(pd.interestExpense) : 0,
+        interestRate: pd.interestRate,
+        repaymentMethod: pd.repaymentMethod || pd.debtTypeSnapshot,
+        paymentDay: pd.paymentDay || 1,
+        statusAtMonthEnd: 'active' as const,
+        source: 'opening-seed' as const,
+        memo: pd.memo || '',
+        isHistoricalOnly: pd.isHistoricalOnly,
+        isIncluded: pd.isIncluded !== false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+    });
+
+    const activeAssets = newAssets.filter((a) => a.isIncluded !== false);
+    const activeDebts = newDebts.filter((d) => d.isIncluded !== false);
+    const totalAssets = Math.round(activeAssets.reduce((s, a) => s + (Number(a.value) || 0), 0));
+    const totalDebts = Math.round(activeDebts.reduce((s, d) => s + (Number(d.openingPrincipal) || 0), 0));
+
+    const newMonthly: MonthlySnapshot = {
+      id: `opening-${nextMonthKey}`,
+      month: nextMonthKey,
+      status: 'draft',
+      source: 'opening-seed',
+      referenceDate: `${nextMonthKey}-01`,
+      totalAssets,
+      totalDebts,
+      netWorth: totalAssets - totalDebts,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      confirmedAt: undefined,
+      assetSnapshotIds: newAssets.map((a) => a.id),
+      debtSnapshotIds: newDebts.map((d) => d.id),
+    };
+
+    return {
+      monthly: newMonthly,
+      assets: newAssets,
+      debts: newDebts,
+    };
   },
 
   getMonthlyDebtMovements(monthInput: string | { year: number; month: number }): MonthlyDebtMovement[] {

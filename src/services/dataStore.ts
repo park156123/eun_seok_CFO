@@ -1739,11 +1739,15 @@ class GlobalMockDataStoreImpl implements IDataStore {
     }
   }
 
+  public createNextMonthSnapshot(prevMonth: string, nextMonth: string) {
+    return SnapshotService.createNextMonthSnapshot(prevMonth, nextMonth);
+  }
+
   public getOpeningSnapshotData(month: string) {
     if (!month) return null;
     const monthKey = month.trim();
     const monthly = SnapshotService.getOpeningSnapshot(monthKey);
-    if (!monthly || monthly.source !== 'opening-seed') {
+    if (!monthly) {
       return null;
     }
     const assets = SnapshotService.getAssetSnapshotsByMonth(monthKey);
@@ -1858,7 +1862,7 @@ class GlobalMockDataStoreImpl implements IDataStore {
       throw new Error('이미 확정된 시작 스냅샷이 존재합니다');
     }
 
-    if (!existing || existing.source !== 'opening-seed' || existing.status !== 'draft') {
+    if (!existing || existing.status !== 'draft') {
       throw new Error('확정할 시작 스냅샷 임시저장 데이터가 없습니다');
     }
 
@@ -2138,6 +2142,7 @@ export interface IDataStore {
   saveOpeningSnapshot(monthly: MonthlySnapshot, assets: AssetSnapshot[], debts: DebtSnapshot[]): void;
   updateDraftOpeningSnapshot(monthly: MonthlySnapshot, assets: AssetSnapshot[], debts: DebtSnapshot[]): void;
   confirmOpeningSnapshot(month: string): void;
+  createNextMonthSnapshot(prevMonth: string, nextMonth: string): { monthly: MonthlySnapshot; assets: AssetSnapshot[]; debts: DebtSnapshot[] };
   getOpeningSnapshotDraft(month: string): (MonthlySnapshot & { assets: AssetSnapshot[]; debts: DebtSnapshot[] }) | null;
   hasOpeningSnapshotDraft(month: string): boolean;
   saveOpeningSnapshotDraft(draftInput: any): MonthlySnapshot & { assets: AssetSnapshot[]; debts: DebtSnapshot[] };

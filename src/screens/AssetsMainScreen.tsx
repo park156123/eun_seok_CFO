@@ -75,6 +75,7 @@ export const AssetsMainScreen: React.FC<AssetsMainScreenProps> = () => {
     const master = findMatchingMasterDebt(d, masterDebts);
     const openingPrincipal = Number(d.openingPrincipal) || 0;
 
+    const snapshotRate = d.interestRate !== undefined && d.interestRate !== null ? Number(d.interestRate) : undefined;
     const masterRate =
       master?.interestRate !== undefined && master?.interestRate !== null
         ? Number(master.interestRate)
@@ -84,39 +85,39 @@ export const AssetsMainScreen: React.FC<AssetsMainScreenProps> = () => {
         ? Number(master.rate)
         : master?.currentRate !== undefined && master?.currentRate !== null
         ? Number(master.currentRate)
-        : d.interestRate !== undefined && d.interestRate !== null
-        ? Number(d.interestRate)
-        : 0;
+        : undefined;
+
+    const rateVal = snapshotRate !== undefined ? snapshotRate : (masterRate !== undefined ? masterRate : 0);
 
     const repaymentMethod =
+      d.repaymentMethod ||
+      d.debtTypeSnapshot ||
       master?.repaymentMethod ||
       master?.repaymentType ||
       master?.paymentType ||
       master?.rateType ||
       master?.amortizationType ||
-      d.repaymentMethod ||
-      d.debtTypeSnapshot ||
       '원리금상환';
 
     const isInterestOnly = repaymentMethod.includes('이자만') || repaymentMethod.includes('만기일시');
     const scheduledPrincipal = isInterestOnly ? 0 : (Number(d.scheduledPrincipalRepayment) || 0);
 
-    const hasRate = masterRate > 0;
-    const estimatedInterest = hasRate ? calculateMonthlyInterest(openingPrincipal, masterRate) : 0;
+    const hasRate = rateVal > 0;
+    const estimatedInterest = hasRate ? calculateMonthlyInterest(openingPrincipal, rateVal) : 0;
     const monthlyPayment = scheduledPrincipal + estimatedInterest;
 
     const paymentDayVal =
+      d.paymentDay ??
       master?.paymentDay ??
       master?.dueDay ??
       master?.monthlyPaymentDay ??
-      master?.interestPaymentDay ??
-      d.paymentDay;
+      master?.interestPaymentDay;
 
-    const lenderName = master?.creditorName || master?.creditor || master?.lender || d.creditorNameSnapshot || '금융기관';
+    const lenderName = d.creditorNameSnapshot || (d as any).creditor || master?.creditorName || master?.creditor || master?.lender || '금융기관';
 
     return {
       id: d.id,
-      debtName: d.debtNameSnapshot || master?.debtName || master?.name || '부채',
+      debtName: d.debtNameSnapshot || (d as any).name || master?.debtName || master?.name || '부채',
       debtType: d.debtTypeSnapshot || repaymentMethod,
       lender: lenderName,
       currentBalance: openingPrincipal,
@@ -124,7 +125,7 @@ export const AssetsMainScreen: React.FC<AssetsMainScreenProps> = () => {
       estimatedInterest,
       monthlyPayment,
       hasRate,
-      interestRate: masterRate,
+      interestRate: rateVal,
       repaymentMethod,
       paymentDay: paymentDayVal ? `매월 ${paymentDayVal}일` : '스냅샷 확정',
       isHistorical: Boolean(d.isHistoricalOnly),

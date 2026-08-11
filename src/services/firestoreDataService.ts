@@ -249,8 +249,8 @@ export const fetchAllMonthlySettlementRecordsFromFirestore = async (): Promise<R
         const data = docSnap.data();
         const rawKey = docSnap.id; // e.g. '2026-04'
         const normKey = rawKey.includes('-') ? rawKey : (rawKey.match(/(\d{4})년\s*(\d{1,2})월/) ? `${rawKey.match(/(\d{4})년\s*(\d{1,2})월/)![1]}-${String(rawKey.match(/(\d{4})년\s*(\d{1,2})월/)![2]).padStart(2, '0')}` : rawKey);
-        const record = data.record || data;
-        if (record && (record.month || record.status || record.incomes)) {
+        const record = data.record ? { ...data, ...data.record } : { ...data };
+        if (record && (record.month || record.status || record.incomes || record.specialNotes)) {
           results[normKey] = record;
         }
       }
@@ -283,6 +283,55 @@ export const saveMonthlySettlementRecordToFirestore = async (
     console.log(`Firestore: Saved monthlySettlements/${monthKey} successfully.`);
   } catch (err) {
     console.error(`Firestore: Failed to save monthlySettlements/${monthKey}:`, err);
+  }
+};
+
+/**
+ * Safely updates specialNotes and noteConfirmedAt for a MonthlySettlement document in Firestore
+ * without overwriting or resetting any financial numbers.
+ */
+export const saveSpecialNotesToFirestore = async (
+  monthKey: string,
+  specialNotes: string,
+  noteConfirmedAt: string
+): Promise<void> => {
+  try {
+    const docRef = doc(db, 'households', HOUSEHOLD_ID, 'monthlySettlements', monthKey);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      const existingRecord = data.record || {};
+      const updatedRecord = {
+        ...existingRecord,
+        specialNotes,
+        noteConfirmedAt,
+      };
+      const payload = removeUndefinedFields({
+        ...data,
+        specialNotes,
+        noteConfirmedAt,
+        record: updatedRecord,
+        updatedAt: new Date().toISOString(),
+      });
+      await setDoc(docRef, payload, { merge: true });
+    } else {
+      const payload = removeUndefinedFields({
+        monthKey,
+        specialNotes,
+        noteConfirmedAt,
+        record: {
+          monthKey,
+          specialNotes,
+          noteConfirmedAt,
+        },
+        updatedAt: new Date().toISOString(),
+      });
+      await setDoc(docRef, payload, { merge: true });
+    }
+    console.log(`Firestore: Saved specialNotes for monthlySettlements/${monthKey} successfully.`);
+  } catch (err) {
+    console.error(`Firestore: Failed to save specialNotes for monthlySettlements/${monthKey}:`, err);
+    throw err;
   }
 };
 
