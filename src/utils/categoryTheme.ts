@@ -88,6 +88,7 @@ const SUBCATEGORY_ICON_MAP: Record<string, string> = {
   '배우자 생활비': 'family_restroom',
   육아: 'family_restroom',
   경조사: 'family_restroom',
+  여가문화: 'attractions',
   기부: 'volunteer_activism',
   기타지출: 'more_horiz',
   미용: 'content_cut',

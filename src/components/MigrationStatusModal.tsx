@@ -289,7 +289,7 @@ export const MigrationStatusModal: React.FC<MigrationStatusModalProps> = ({ isOp
                 </p>
                 <p className="text-slate-300 text-[11px] mb-1">{report10a.debtTermsPreservation.summary}</p>
                 <div className="grid grid-cols-2 gap-1.5">
-                  {report10a.debtTermsPreservation.details.map((dt, i) => (
+                  {(report10a?.debtTermsPreservation?.details || []).map((dt, i) => (
                     <div key={i} className="p-1.5 bg-slate-800/60 rounded border border-slate-700/50 text-[10px] flex justify-between items-center">
                       <span className="text-slate-200 font-medium truncate max-w-[120px]">{dt.debtName}</span>
                       <span className="text-emerald-400 font-mono">{dt.rate} | {dt.method} | {dt.paymentDay}</span>

@@ -234,7 +234,7 @@ export const ExpenseListScreen: React.FC<ExpenseListScreenProps> = ({
 
       {/* Edit Category Modal */}
       {editingTx && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+        <div data-debug-modal="tx-classification-expense" className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
           <div className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl border border-[#00236f]/20">
             <div className="flex justify-between items-center border-b border-[#c5c5d3]/20 pb-3">
               <div>
@@ -284,7 +284,7 @@ export const ExpenseListScreen: React.FC<ExpenseListScreenProps> = ({
                   onChange={(e) => setSelectedMinor(e.target.value)}
                   className="w-full p-2.5 border border-[#c5c5d3] rounded-xl text-xs font-semibold focus:outline-none focus:border-[#00236f]"
                 >
-                  {activeMajorGroup.subCategories.map((sub) => (
+                  {(activeMajorGroup?.subCategories || []).map((sub) => (
                     <option key={sub.name} value={sub.name}>
                       {sub.name}
                     </option>

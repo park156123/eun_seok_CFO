@@ -1,14 +1,22 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { SettlementData, IncomeSource, IncomeRecord, ClassificationResult, ExclusionReasonCode, MerchantRule, ExclusionRule, RuleConfidence, Transaction } from '../types';
 import { GlobalMockDataStore } from '../services/dataStore';
 import { SnapshotService, formatMonthKorean } from '../services/snapshotService';
 import { normalizeMonthKey, getMonthlyRecordForMonth } from '../utils/monthDataSelectors';
-import { saveMonthlySettlementRecordToFirestore, fetchAllMonthlySettlementRecordsFromFirestore, saveSpecialNotesToFirestore } from '../services/firestoreDataService';
+import { resolveSpecialNotes } from '../utils/resolveSpecialNotes';
+import { saveMonthlySettlementRecordToFirestore, saveSpecialNotesToFirestore } from '../services/firestoreDataService';
 import { ActiveSessionBanner } from '../components/ActiveSessionBanner';
-import { isConsumerTransaction } from '../utils/consumerExpenseUtils';
+import { isConsumerTransaction, isTaxTransaction } from '../utils/consumerExpenseUtils';
 import { useSelectedMonth } from '../context/SelectedMonthContext';
 import { calculateMonthFinancialCost } from '../utils/financialCostCalculator';
 import { OpeningSnapshotModal } from '../components/OpeningSnapshotModal';
+
+import {
+  buildCfoAnalysisInput,
+  getCachedAnalysisResult,
+  requestCfoMonthlyAnalysis,
+  CfoAnalysisResult,
+} from '../services/cfoAnalysisService';
 
 import {
   readCsvFileWithEncoding,
@@ -19,7 +27,8 @@ import {
   ColumnMapping,
   CsvParseResult,
 } from '../utils/csvParser';
-import { classifyTransaction, reclassifyTransactions } from '../utils/transactionClassifier';
+import { classifyTransaction, reclassifyTransactions, parseCsvUserCategory } from '../utils/transactionClassifier';
+import { parseCategoryString } from '../data/consumerCategories';
 import {
   CONSUMER_CATEGORIES,
   EXCLUSION_REASONS,
@@ -113,6 +122,13 @@ export interface MonthlySettlementRecord {
   csvAutoRate?: number;
   transactions: ReviewTransaction[];
   financialCost?: number;
+  totalIncome?: number;
+  totalCashOutflow?: number;
+  livingExpense?: number;
+  totalSavings?: number;
+  principalRepayment?: number;
+  debtPrincipalRepayment?: number;
+  taxAndPublicCharges?: number;
   totalOutflow?: number;
   netCashFlow?: number;
   specialNotes?: string;
@@ -154,7 +170,7 @@ const SpecialNotesSection: React.FC<SpecialNotesSectionProps> = ({
 
   const isDirty = draftNotes !== savedNotes;
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (isSaving) return;
     setIsSaving(true);
     setSaveError(null);
@@ -168,14 +184,18 @@ const SpecialNotesSection: React.FC<SpecialNotesSectionProps> = ({
     const timestampStr = `${year}.${month}.${day} ${hours}:${minutes}`;
 
     try {
-      await saveSpecialNotesToFirestore(normMonth, draftNotes, timestampStr);
+      // 1. Local / React 상태 우선 확정
       setSavedNotes(draftNotes);
       setConfirmedAt(timestampStr);
-      setIsSaving(false);
+
+      // 2. onNotesSaved: 로컬 스토리지 저장 및 단일 Firestore 비동기 저장 유발
       onNotesSaved(normMonth, draftNotes, timestampStr);
+
+      // 3. UI 저장 완료 (Firestore 서버 응답과 무관하게 즉시 해제)
+      setIsSaving(false);
     } catch (err: any) {
-      console.error('Failed to save special notes to Firestore:', err);
-      setSaveError(err?.message || 'Firestore 저장 중 오류가 발생했습니다.');
+      console.error('Failed to save special notes:', err);
+      setSaveError(err?.message || '특이사항 저장 중 오류가 발생했습니다.');
       setIsSaving(false);
     }
   };
@@ -259,35 +279,9 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   settlementData,
   onUpdateSettlement,
 }) => {
-  const { formattedSelectedMonth, setSelectedMonth: setGlobalSelectedMonth } = useSelectedMonth();
+  const { selectedMonth, setSelectedMonth, formattedSelectedMonth } = useSelectedMonth();
   // Available Months for Settlement (전월 결산 기준)
   const monthList = ['2026년 4월', '2026년 5월', '2026년 6월', '2026년 7월'];
-  // Default base settlement month receives global selectedMonth as default initial value
-  const [selectedMonth, setSelectedMonth] = useState<string>(() =>
-    normalizeMonthKey(formattedSelectedMonth || '2026년 4월').yyyyMm
-  );
-
-  // Sync internal selectedMonth state with global SelectedMonthContext
-  useEffect(() => {
-    if (selectedMonth && setGlobalSelectedMonth) {
-      const localNorm = normalizeMonthKey(selectedMonth).yyyyMm;
-      const globalNorm = normalizeMonthKey(formattedSelectedMonth || '').yyyyMm;
-      if (localNorm !== globalNorm) {
-        setGlobalSelectedMonth(localNorm);
-      }
-    }
-  }, [selectedMonth, formattedSelectedMonth, setGlobalSelectedMonth]);
-
-  useEffect(() => {
-    if (formattedSelectedMonth) {
-      const localNorm = normalizeMonthKey(selectedMonth).yyyyMm;
-      const globalNorm = normalizeMonthKey(formattedSelectedMonth).yyyyMm;
-      if (localNorm !== globalNorm) {
-        setSelectedMonth(globalNorm);
-      }
-    }
-  }, [formattedSelectedMonth, selectedMonth]);
-
 
   // Accordion state for Step Progress Card (Requirement 11 - Collapsed by default)
   const [isStepsExpanded, setIsStepsExpanded] = useState<boolean>(false);
@@ -320,6 +314,80 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
       { id: 'inc-3', incomeName: '게스트하우스1', incomeType: '사업소득', amount: 1100000, prevAmount: 1200000 },
       { id: 'inc-4', incomeName: '현하우스 임대료', incomeType: '임대소득', amount: 1500000, prevAmount: 1500000 },
     ];
+  };
+
+  // Resolve incomes for a target month with Priority: 1. Actual IncomeRecords/Sources, 2. rawIncomes, 3. getInitialIncomes()
+  const resolveMonthIncomes = (sYear: number, sMonth: number, rawIncomes?: any[]) => {
+    const sources = GlobalMockDataStore.getIncomeSources().filter((i) => i.isActive !== false);
+    if (sources.length > 0) {
+      const records = GlobalMockDataStore.getIncomeRecords(sYear, sMonth);
+      return sources.map((src) => {
+        const rec = records.find((r) => r.incomeSourceId === src.id);
+        let amt = 0;
+        if (rec && rec.actualIncome !== undefined && rec.actualIncome !== null) {
+          amt = rec.actualIncome;
+        } else if (src.incomeMode === 'fixed') {
+          amt = src.fixedMonthlyIncome ?? 0;
+        }
+        return {
+          id: src.id,
+          incomeName: src.incomeName || src.name || '수입원',
+          incomeType: src.incomeType || '사업소득',
+          amount: amt,
+          prevAmount: undefined,
+        };
+      });
+    }
+
+    if (Array.isArray(rawIncomes) && rawIncomes.length > 0) {
+      return rawIncomes;
+    }
+
+    return getInitialIncomes();
+  };
+
+  // Helper to ensure 2026-05 record exists and uses actual IncomeRecords SSOT (25,770,000 KRW)
+  const ensure202605Record = (targetMap: Record<string, MonthlySettlementRecord>) => {
+    const normKey = '2026-05';
+    const existing = targetMap[normKey] || targetMap['2026년 5월'];
+
+    const incomesFor05 = resolveMonthIncomes(2026, 5, existing?.incomes);
+    const totalInc = incomesFor05.reduce((sum, inc) => sum + (Number(inc.amount) || 0), 0);
+
+    const isLockedOrCompleted = existing?.status === '결산잠금' || existing?.status === '완료';
+
+    if (isLockedOrCompleted) {
+      const existingOutflow = Number(existing?.totalCashOutflow ?? existing?.totalOutflow) || 0;
+      targetMap[normKey] = {
+        ...existing,
+        month: '2026-05',
+        status: existing.status,
+        incomes: incomesFor05.length > 0 ? incomesFor05 : (existing.incomes || []),
+        totalIncome: existing.totalIncome || totalInc,
+        totalCashOutflow: existing.totalCashOutflow ?? existing.totalOutflow ?? existingOutflow,
+        totalOutflow: existing.totalOutflow ?? existing.totalCashOutflow ?? existingOutflow,
+        netCashFlow: existing.netCashFlow ?? ((existing.totalIncome || totalInc) - existingOutflow),
+      };
+      return;
+    }
+
+    const outflow = Number(existing?.totalCashOutflow ?? existing?.totalOutflow) || 0;
+    const currentStatus = existing?.status && existing.status !== '미시작' ? existing.status : '진행중';
+
+    targetMap[normKey] = {
+      ...(existing || {}),
+      month: '2026-05',
+      status: currentStatus,
+      currentStep: existing?.currentStep || 1,
+      incomes: incomesFor05,
+      savingsInvestments: existing?.savingsInvestments || [],
+      csvUploaded: Boolean(existing?.csvUploaded),
+      transactions: existing?.transactions || [],
+      totalIncome: totalInc,
+      totalCashOutflow: outflow,
+      totalOutflow: outflow,
+      netCashFlow: totalInc - outflow,
+    };
   };
 
   // Sample transactions generator with AI classification & confidence levels
@@ -384,30 +452,35 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
 
   // Records map per month stored in localStorage
   const [recordsMap, setRecordsMap] = useState<Record<string, MonthlySettlementRecord>>(() => {
+    let map: Record<string, MonthlySettlementRecord> = {};
     try {
       const saved = localStorage.getItem('cfo_monthly_records_v3');
       if (saved) {
         const parsed = JSON.parse(saved);
-        delete parsed['2026년 5월'];
-        delete parsed['2026년 6월'];
-        const normalized: Record<string, MonthlySettlementRecord> = {};
         Object.entries(parsed).forEach(([k, v]) => {
           if (v && typeof v === 'object') {
             const norm = normalizeMonthKey(k);
-            normalized[norm.yyyyMm] = v as MonthlySettlementRecord;
+            const rec = { ...(v as MonthlySettlementRecord) };
+            const incSum = (rec.incomes || []).reduce(
+              (sum, inc) => sum + (Number(inc.amount) || 0),
+              0
+            );
+            if ((rec.totalIncome === 0 || rec.totalIncome === undefined) && (rec.incomes || []).length > 0 && incSum > 0) {
+              rec.totalIncome = incSum;
+              const outflow = Number(rec.totalCashOutflow ?? rec.totalOutflow) || 0;
+              rec.netCashFlow = incSum - outflow;
+            }
+            map[norm.yyyyMm] = rec;
           }
         });
-        return normalized;
       }
     } catch (e) {
       console.error(e);
     }
-    // Return default state in React state only (keyed by YYYY-MM) without writing to localStorage/Firestore
-    return {
-      '2026-04': {
+
+    if (!map['2026-04']) {
+      map['2026-04'] = {
         month: '2026-04',
-        year: 2026,
-        monthNum: 4,
         status: '결산잠금',
         currentStep: 5,
         incomes: [
@@ -433,37 +506,97 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
         transactions: [],
         completedAtDate: '2026.05.02',
         completedAtTime: '18:30',
-      },
-    };
+      };
+    }
+
+    // Ensure 2026-05 record exists with actual 7 income sources SSOT (25,770,000 KRW)
+    ensure202605Record(map);
+
+    try {
+      localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(map));
+    } catch (e) {
+      console.warn('Failed to save cfo_monthly_records_v3 on initial load', e);
+    }
+
+    return map;
   });
 
-  // Sync from Firestore on component mount
+  // Sync recordsMap whenever GlobalMockDataStore changes (already populated by GlobalMockDataStore.syncWithFirestore)
   useEffect(() => {
-    fetchAllMonthlySettlementRecordsFromFirestore().then((fsRecords) => {
-      if (fsRecords && Object.keys(fsRecords).length > 0) {
-        let mergedToSave: Record<string, MonthlySettlementRecord> | null = null;
-        setRecordsMap((prev) => {
-          const merged = { ...prev };
-          Object.entries(fsRecords).forEach(([k, rec]) => {
-            if (rec && typeof rec === 'object') {
+    const syncFromLocalStorage = () => {
+      try {
+        const saved = localStorage.getItem('cfo_monthly_records_v3');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          const map: Record<string, MonthlySettlementRecord> = {};
+          Object.entries(parsed).forEach(([k, v]) => {
+            if (v && typeof v === 'object') {
               const norm = normalizeMonthKey(k);
-              merged[norm.yyyyMm] = rec;
+              const rec = { ...(v as MonthlySettlementRecord) };
+              const incSum = (rec.incomes || []).reduce(
+                (sum, inc) => sum + (Number(inc.amount) || 0),
+                0
+              );
+              if ((rec.totalIncome === 0 || rec.totalIncome === undefined) && (rec.incomes || []).length > 0 && incSum > 0) {
+                rec.totalIncome = incSum;
+                const outflow = Number(rec.totalCashOutflow ?? rec.totalOutflow) || 0;
+                rec.netCashFlow = incSum - outflow;
+              }
+              map[norm.yyyyMm] = rec;
             }
           });
-          mergedToSave = merged;
-          return merged;
-        });
+          ensure202605Record(map);
+          setRecordsMap(map);
+        }
+      } catch (e) {
+        console.error('Error syncing local recordsMap from GlobalMockDataStore notification', e);
+      }
+    };
 
-        if (mergedToSave) {
-          try {
-            localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(mergedToSave));
-          } catch (e) {
-            console.warn('Failed to save firestore monthly records to local', e);
-          }
-          (GlobalMockDataStore as any).notifyListeners();
+    const unsub = GlobalMockDataStore.subscribe(() => {
+      syncFromLocalStorage();
+    });
+    return unsub;
+  }, []);
+
+  // One-time legacy correction effect to sync 2026-05 and any legacy record if totalIncome is 0
+  const hasRunLegacyCorrectionRef = useRef(false);
+  useEffect(() => {
+    if (hasRunLegacyCorrectionRef.current) return;
+    hasRunLegacyCorrectionRef.current = true;
+
+    let hasChanges = false;
+    const nextMap = { ...recordsMap };
+
+    Object.entries(recordsMap).forEach(([k, rec]: [string, any]) => {
+      if (rec && typeof rec === 'object') {
+        const incSum = (rec.incomes || []).reduce(
+          (sum: number, inc: any) => sum + (Number(inc.amount) || 0),
+          0
+        );
+        if ((rec.totalIncome === 0 || rec.totalIncome === undefined) && (rec.incomes || []).length > 0 && incSum > 0) {
+          const outflow = Number(rec.totalCashOutflow ?? rec.totalOutflow) || 0;
+          const updatedRec = {
+            ...rec,
+            totalIncome: incSum,
+            netCashFlow: incSum - outflow,
+          };
+          nextMap[k] = updatedRec;
+          hasChanges = true;
+          saveMonthlySettlementRecordToFirestore(k, updatedRec).catch(() => {});
         }
       }
-    }).catch((e) => console.warn('MonthlySettlementScreen: Firestore sync failed', e));
+    });
+
+    if (hasChanges) {
+      setRecordsMap(nextMap);
+      try {
+        localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(nextMap));
+        (GlobalMockDataStore as any).notifyListeners();
+      } catch (e) {
+        console.error('Local storage save failed for legacy record correction', e);
+      }
+    }
   }, []);
 
   // Current selected month record
@@ -474,23 +607,123 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
     recordsMap[normSelectedMonth.formattedMonth] ||
     getMonthlyRecordForMonth(selectedMonth);
 
+  const resolvedIncomes = resolveMonthIncomes(normSelectedMonth.year, normSelectedMonth.month, rawRecord?.incomes);
+  const resolvedTotalIncome = (rawRecord?.totalIncome && rawRecord.totalIncome > 0)
+    ? rawRecord.totalIncome
+    : resolvedIncomes.reduce((sum, inc) => sum + (Number(inc.amount) || 0), 0);
+
   const currentRecord = {
     month: normSelectedMonth.yyyyMm,
-    status: rawRecord?.status || '미시작',
+    status: rawRecord?.status || '진행중',
     currentStep: rawRecord?.currentStep || 1,
     csvUploaded: Boolean(rawRecord?.csvUploaded),
     ...rawRecord,
-    incomes: Array.isArray(rawRecord?.incomes) ? rawRecord.incomes : getInitialIncomes(),
+    incomes: resolvedIncomes,
+    totalIncome: resolvedTotalIncome,
     savingsInvestments: Array.isArray(rawRecord?.savingsInvestments) ? rawRecord.savingsInvestments : [],
-    transactions: Array.isArray(rawRecord?.transactions) && rawRecord.transactions.length > 0
-      ? rawRecord.transactions
-      : (GlobalMockDataStore.getOtherSettings()?.transactions || []),
+    transactions: useMemo(() => {
+      const rawTxs = Array.isArray(rawRecord?.transactions) && rawRecord.transactions.length > 0
+        ? rawRecord.transactions
+        : (GlobalMockDataStore.getOtherSettings()?.transactions || []);
+
+      if (normSelectedMonth.yyyyMm !== '2026-07') {
+        return rawTxs;
+      }
+
+      return rawTxs.map((tx: any) => {
+        const isPending = tx.needsReview === true || tx.category === '분류 대기' || tx.category === '미분류';
+        const isNotConfirmed = tx.userConfirmed !== true;
+        const txType =
+          tx.transactionType ||
+          tx.typeStr ||
+          tx.rawRow?.['구분'] ||
+          tx.rawRow?.['적요'] ||
+          tx.rawRow?.['거래구분'] ||
+          tx.rawRow?.['적요명'] ||
+          undefined;
+
+        if (!isPending || !isNotConfirmed || !txType) {
+          return tx;
+        }
+
+        const csvMapping = parseCsvUserCategory(txType);
+        if (!csvMapping) {
+          return tx;
+        }
+
+        let newCategory = '미분류';
+        let classificationObj = { ...(tx.classification || {}) };
+
+        if (csvMapping.classificationType === 'consumer') {
+          newCategory = `${csvMapping.majorCategory} > ${csvMapping.minorCategory}`;
+          classificationObj = {
+            ...classificationObj,
+            classificationType: 'consumer',
+            majorCategory: csvMapping.majorCategory,
+            minorCategory: csvMapping.minorCategory,
+            exclusionReason: null,
+            included: true,
+            needsConfirmation: false,
+            appliedRuleId: 'csv-explicit-one-time',
+            appliedRuleType: 'user-confirmed',
+          };
+        } else if (csvMapping.classificationType === 'excluded') {
+          newCategory = `제외 > ${csvMapping.exclusionType || '결산 제외'}`;
+          classificationObj = {
+            ...classificationObj,
+            classificationType: 'excluded',
+            exclusionType: csvMapping.exclusionType || '결산 제외',
+            exclusionReason: csvMapping.exclusionReason || 'unknown',
+            included: false,
+            needsConfirmation: false,
+            appliedRuleId: 'csv-explicit-one-time',
+            appliedRuleType: 'user-confirmed',
+          };
+        }
+
+        return {
+          ...tx,
+          transactionType: txType,
+          category: newCategory,
+          needsReview: false,
+          classification: classificationObj,
+        };
+      });
+    }, [rawRecord?.transactions, normSelectedMonth.yyyyMm]),
   };
 
   // Expanded breakdown card state
-  const [expandedCard, setExpandedCard] = useState<'none' | 'living' | 'financial' | 'debt' | 'savings'>('none');
+  const [expandedCard, setExpandedCard] = useState<'none' | 'living' | 'financial' | 'debt' | 'savings' | 'tax'>('none');
   const [selectedLivingCategory, setSelectedLivingCategory] = useState<string | null>(null);
   const [isOpeningSnapshotModalOpen, setIsOpeningSnapshotModalOpen] = useState(false);
+
+  // AI Analysis state (button-triggered & cached)
+  const [aiAnalysis, setAiAnalysis] = useState<CfoAnalysisResult | null>(null);
+  const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  // Check cached analysis when selectedMonth changes
+  useEffect(() => {
+    const input = buildCfoAnalysisInput(selectedMonth);
+    const cached = getCachedAnalysisResult(selectedMonth, input);
+    setAiAnalysis(cached);
+    setAiError(null);
+  }, [selectedMonth]);
+
+  const handleRunAiAnalysis = async () => {
+    setIsAiLoading(true);
+    setAiError(null);
+    try {
+      const input = buildCfoAnalysisInput(selectedMonth);
+      const res = await requestCfoMonthlyAnalysis(input);
+      setAiAnalysis(res);
+    } catch (err: any) {
+      console.error('Monthly Settlement AI Analysis failed:', err);
+      setAiError('AI 분석을 불러오지 못했습니다. 다시 시도해 주세요.');
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
 
   // STEP 3 Local States for upload animation, drag & drop, column mapping, and error handling
   const [csvUploadState, setCsvUploadState] = useState<'idle' | 'uploading' | 'completed' | 'error'>('idle');
@@ -517,69 +750,73 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
     setPendingCsvData(null);
   }, [selectedMonth]);
 
+  const recordsMapRef = useRef(recordsMap);
+  useEffect(() => {
+    recordsMapRef.current = recordsMap;
+  }, [recordsMap]);
+
   // Helper mutation
-  const updateCurrentRecord = (updater: (prev: MonthlySettlementRecord) => MonthlySettlementRecord) => {
+  const updateCurrentRecord = (updater: (prev: MonthlySettlementRecord) => MonthlySettlementRecord): MonthlySettlementRecord => {
     const normMonth = normalizeMonthKey(selectedMonth).yyyyMm;
-    let nextUpdated: MonthlySettlementRecord | null = null;
-    let nextMap: Record<string, MonthlySettlementRecord> | null = null;
+    const currentMap = recordsMapRef.current || recordsMap;
+    const rec = currentMap[normMonth] || currentMap[selectedMonth] || {
+      month: normMonth,
+      status: '진행중',
+      currentStep: 1,
+      incomes: resolveMonthIncomes(normSelectedMonth.year, normSelectedMonth.month),
+      savingsInvestments: [],
+      csvUploaded: false,
+      transactions: [],
+    };
+    const updated = updater(rec);
+    const nextMap = {
+      ...currentMap,
+      [normMonth]: updated,
+    };
 
-    setRecordsMap((prev) => {
-      const rec = prev[normMonth] || prev[selectedMonth] || {
-        month: normMonth,
-        status: '미시작',
-        currentStep: 1,
-        incomes: getInitialIncomes(),
-        savingsInvestments: [],
-        csvUploaded: false,
-        transactions: [],
-      };
-      const updated = updater(rec);
-      nextUpdated = updated;
-      nextMap = {
-        ...prev,
-        [normMonth]: updated,
-      };
-      return nextMap;
-    });
+    recordsMapRef.current = nextMap;
+    setRecordsMap(nextMap);
 
-    if (nextMap && nextUpdated) {
-      try {
-        localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(nextMap));
-        saveMonthlySettlementRecordToFirestore(normMonth, nextUpdated);
-        (GlobalMockDataStore as any).notifyListeners();
-      } catch (e) {
-        console.error(e);
-      }
+    try {
+      localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(nextMap));
+      saveMonthlySettlementRecordToFirestore(normMonth, updated);
+      (GlobalMockDataStore as any).notifyListeners();
+    } catch (e) {
+      console.error(e);
     }
+
+    return updated;
   };
 
   const handleNotesSaved = (normMonth: string, notes: string, confirmedAt: string) => {
-    setRecordsMap((prev) => {
-      const rec = prev[normMonth] || prev[selectedMonth] || {
-        month: normMonth,
-        status: '미시작',
-        currentStep: 1,
-        incomes: getInitialIncomes(),
-        savingsInvestments: [],
-        csvUploaded: false,
-        transactions: [],
-      };
-      const updated: MonthlySettlementRecord = {
-        ...rec,
-        specialNotes: notes,
-        noteConfirmedAt: confirmedAt,
-      };
-      const nextMap = {
-        ...prev,
-        [normMonth]: updated,
-      };
-      try {
-        localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(nextMap));
-      } catch (e) {
-        console.error(e);
-      }
-      return nextMap;
-    });
+    const currentMap = recordsMapRef.current || recordsMap;
+    const rec = currentMap[normMonth] || currentMap[selectedMonth] || {
+      month: normMonth,
+      status: '진행중',
+      currentStep: 1,
+      incomes: resolveMonthIncomes(normSelectedMonth.year, normSelectedMonth.month),
+      savingsInvestments: [],
+      csvUploaded: false,
+      transactions: [],
+    };
+    const updated: MonthlySettlementRecord = {
+      ...rec,
+      specialNotes: notes,
+      noteConfirmedAt: confirmedAt,
+    };
+    const nextMap = {
+      ...currentMap,
+      [normMonth]: updated,
+    };
+    recordsMapRef.current = nextMap;
+    setRecordsMap(nextMap);
+
+    try {
+      localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(nextMap));
+      saveMonthlySettlementRecordToFirestore(normMonth, updated);
+    } catch (e) {
+      console.error(e);
+    }
     (GlobalMockDataStore as any).notifyListeners();
   };
 
@@ -789,10 +1026,16 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
       };
     });
 
+    const newTotalIncome = newIncomesList.reduce(
+      (sum, income) => sum + (Number(income.amount) || 0),
+      0
+    );
+
     updateCurrentRecord((rec) => ({
       ...rec,
       status: '진행중',
       incomes: newIncomesList,
+      totalIncome: newTotalIncome,
       currentStep: 2,
     }));
   };
@@ -1147,8 +1390,24 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
     setSearchQuery('');
   }, [selectedMonth]);
 
+  const instanceIdRef = useRef(Math.random().toString(36).slice(2, 8));
+  const instanceId = instanceIdRef.current;
+
+  useEffect(() => {
+    console.log(`[TXMODAL-MOUNT] MonthlySettlementScreen instanceId=${instanceId}`);
+    return () => {
+      console.log(`[TXMODAL-UNMOUNT] MonthlySettlementScreen instanceId=${instanceId}`);
+    };
+  }, [instanceId]);
+
   const [editingTx, setEditingTx] = useState<ReviewTransaction | null>(null);
-  const [modalChoice, setModalChoice] = useState<'consumer' | 'excluded'>('consumer');
+
+  useEffect(() => {
+    const domCount = typeof document !== 'undefined' ? document.querySelectorAll('[data-debug-modal="tx-classification"]').length : 0;
+    console.log(`[TXMODAL-STATE] instanceId=${instanceId}, editingTx=${editingTx ? editingTx.id : 'null'}, domCount=${domCount}`);
+  }, [editingTx, instanceId]);
+
+  const [modalChoice, setModalChoice] = useState<'consumer' | 'excluded' | 'tax'>('consumer');
   const [modalMajorCat, setModalMajorCat] = useState<string>('식비');
   const [modalMinorCat, setModalMinorCat] = useState<string>('외식');
   const [modalExclusionReason, setModalExclusionReason] = useState<ExclusionReasonCode>('internal_transfer');
@@ -1157,24 +1416,37 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   const openEditModal = (tx: ReviewTransaction) => {
     setEditingTx(tx);
     const cls = tx.classification;
+    const isTax = cls?.classificationType === 'tax' || cls?.majorCategory === '세금·공과' || tx.category === '세금·공과' || tx.category === '세금_공과';
     const isExcluded = cls?.classificationType === 'excluded' || tx.type === 'business' || tx.type === 'debt' || tx.type === 'financial';
-    setModalChoice(isExcluded ? 'excluded' : 'consumer');
-
-    if (cls?.majorCategory && CONSUMER_CATEGORIES[cls.majorCategory]) {
-      setModalMajorCat(cls.majorCategory);
-      setModalMinorCat(cls.minorCategory || CONSUMER_CATEGORIES[cls.majorCategory][0]);
+    
+    if (isTax) {
+      setModalChoice('tax');
+      setApplyFuture(false); // Requirement 13: Default OFF for tax merchant learning
+    } else if (isExcluded) {
+      setModalChoice('excluded');
+      setApplyFuture(true);
     } else {
-      setModalMajorCat('식비');
-      setModalMinorCat('외식');
+      setModalChoice('consumer');
+      setApplyFuture(true);
     }
+
+    const parsed = parseCategoryString(
+      cls?.majorCategory && cls?.minorCategory
+        ? `${cls.majorCategory} > ${cls.minorCategory}`
+        : tx.category || ''
+    );
+    const major = parsed.major && CONSUMER_CATEGORIES[parsed.major] ? parsed.major : '식비';
+    const subList = CONSUMER_CATEGORIES[major] || [];
+    const minor = parsed.minor && subList.includes(parsed.minor) ? parsed.minor : subList[0] || '외식';
+
+    setModalMajorCat(major);
+    setModalMinorCat(minor);
 
     if (cls?.exclusionReason) {
       setModalExclusionReason(cls.exclusionReason);
     } else {
       setModalExclusionReason('internal_transfer');
     }
-
-    setApplyFuture(true);
   };
 
   const handleToggleTxReview = (id: string) => {
@@ -1194,77 +1466,94 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   };
 
   const handleSaveTxClassification = () => {
-    if (!editingTx) return;
+    // 1. Snapshot target transaction and modal inputs into local constants
+    const txToSave = editingTx;
+    if (!txToSave) return;
 
-    const targetMerchant = editingTx.merchant;
-    const isConsumer = modalChoice === 'consumer';
+    const choiceToSave = modalChoice;
+    const majorToSave = modalMajorCat;
+    const minorToSave = modalMinorCat;
+    const exclusionReasonToSave = modalExclusionReason;
+    const applyFutureToSave = applyFuture;
 
-    if (applyFuture && targetMerchant) {
-      if (isConsumer) {
-        GlobalMockDataStore.saveUserMerchantLearning(
-          editingTx.merchantOriginal || targetMerchant,
-          targetMerchant,
-          modalMajorCat,
-          modalMinorCat
-        );
-      } else {
-        const userExRule: ExclusionRule = {
-          id: `user-ex-rule-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          patterns: Array.from(new Set([targetMerchant, editingTx.merchantOriginal || targetMerchant])).filter(Boolean),
-          matchType: 'contains',
-          exclusionType: getExclusionReasonLabel(modalExclusionReason),
-          exclusionReason: modalExclusionReason,
-          dashboardTreatment: 'exclude',
-          debtTreatment: 'none',
-          isActive: true,
+    // 2. Close modal UI immediately before post-save processing
+    setEditingTx(null);
+
+    // 3. Execute all storage updates using snapshot variables ONLY
+    const targetMerchant = txToSave.merchant;
+    const isConsumer = choiceToSave === 'consumer';
+    const isTax = choiceToSave === 'tax';
+
+    const newCls: ClassificationResult = isTax
+      ? {
+          merchantOriginal: txToSave.merchantOriginal || targetMerchant,
+          merchantNormalized: targetMerchant,
+          merchantMaster: targetMerchant,
+          classificationType: 'tax',
+          majorCategory: '세금·공과',
+          minorCategory: '세금·공과',
+          exclusionReason: null,
+          exclusionType: null,
+          included: true,
+          confidence: 'high',
+          needsConfirmation: false,
+          appliedRuleType: 'user-confirmed',
+          userConfirmed: true,
+          reviewCompleted: true,
+        }
+      : isConsumer
+      ? {
+          merchantOriginal: txToSave.merchantOriginal || targetMerchant,
+          merchantNormalized: targetMerchant,
+          merchantMaster: targetMerchant,
+          classificationType: 'consumer',
+          majorCategory: majorToSave,
+          minorCategory: minorToSave,
+          exclusionReason: null,
+          exclusionType: null,
+          included: true,
+          confidence: 'high',
+          needsConfirmation: false,
+          appliedRuleType: 'user-confirmed',
+          userConfirmed: true,
+          reviewCompleted: true,
+        }
+      : {
+          merchantOriginal: txToSave.merchantOriginal || targetMerchant,
+          merchantNormalized: targetMerchant,
+          merchantMaster: targetMerchant,
+          classificationType: 'excluded',
+          majorCategory: null,
+          minorCategory: null,
+          exclusionReason: exclusionReasonToSave,
+          exclusionType: getExclusionReasonLabel(exclusionReasonToSave),
+          included: false,
+          confidence: 'high',
+          needsConfirmation: false,
+          appliedRuleType: 'user-confirmed',
+          userConfirmed: true,
+          reviewCompleted: true,
         };
-        GlobalMockDataStore.saveExclusionRule(userExRule);
-      }
-    }
 
+    const newCategoryStr = isTax
+      ? '세금·공과'
+      : isConsumer
+      ? `${majorToSave} > ${minorToSave}`
+      : `제외 > ${getExclusionReasonLabel(exclusionReasonToSave)}`;
+
+    // Update MonthlySettlementRecord transactions with fallback check
     updateCurrentRecord((rec) => {
-      const newCls: ClassificationResult = isConsumer
-        ? {
-            merchantOriginal: editingTx.merchantOriginal || targetMerchant,
-            merchantNormalized: targetMerchant,
-            merchantMaster: targetMerchant,
-            classificationType: 'consumer',
-            majorCategory: modalMajorCat,
-            minorCategory: modalMinorCat,
-            exclusionReason: null,
-            exclusionType: null,
-            included: true,
-            confidence: 'high',
-            needsConfirmation: false,
-            appliedRuleType: 'user-confirmed',
-            userConfirmed: true,
-            reviewCompleted: true,
-          }
-        : {
-            merchantOriginal: editingTx.merchantOriginal || targetMerchant,
-            merchantNormalized: targetMerchant,
-            merchantMaster: targetMerchant,
-            classificationType: 'excluded',
-            majorCategory: null,
-            minorCategory: null,
-            exclusionReason: modalExclusionReason,
-            exclusionType: getExclusionReasonLabel(modalExclusionReason),
-            included: false,
-            confidence: 'high',
-            needsConfirmation: false,
-            appliedRuleType: 'user-confirmed',
-            userConfirmed: true,
-            reviewCompleted: true,
-          };
-
-      const newCategoryStr = isConsumer
-        ? `${modalMajorCat} > ${modalMinorCat}`
-        : `제외 > ${getExclusionReasonLabel(modalExclusionReason)}`;
+      const baseTxs =
+        Array.isArray(rec.transactions) && rec.transactions.length > 0
+          ? rec.transactions
+          : Array.isArray(currentRecord.transactions) && currentRecord.transactions.length > 0
+            ? currentRecord.transactions
+            : GlobalMockDataStore.getOtherSettings()?.transactions || [];
 
       return {
         ...rec,
-        transactions: rec.transactions.map((t) => {
-          const isMatch = applyFuture ? t.merchant === targetMerchant : t.id === editingTx.id;
+        transactions: baseTxs.map((t) => {
+          const isMatch = applyFutureToSave ? t.merchant === targetMerchant : t.id === txToSave.id;
           if (isMatch) {
             return {
               ...t,
@@ -1274,8 +1563,8 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
               confidenceLevel: 'high',
               confidenceScore: 100,
               userConfirmed: true,
-              classificationStatus: 'user_confirmed',
               classification: newCls,
+              analysisStatus: isConsumer || isTax ? 'included' : 'excluded',
             };
           }
           return t;
@@ -1283,7 +1572,61 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
       };
     });
 
-    setEditingTx(null);
+    // Sync GlobalMockDataStore transactions and trigger official persistence + notify
+    const storeData = GlobalMockDataStore.getData();
+    const storeTxs = storeData.otherSettings?.transactions || [];
+    let storeChanged = false;
+    storeTxs.forEach((t) => {
+      const isMatch = applyFutureToSave ? t.merchant === targetMerchant : t.id === txToSave.id;
+      if (isMatch) {
+        t.category = newCategoryStr;
+        t.type = isConsumer ? 'living' : 'business';
+        t.needsReview = false;
+        t.userConfirmed = true;
+        t.classification = newCls;
+        t.analysisStatus = isConsumer || isTax ? 'included' : 'excluded';
+        storeChanged = true;
+      }
+    });
+
+    if (storeChanged) {
+      try {
+        (GlobalMockDataStore as any).data.otherSettings.transactions = storeTxs;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    // Save user merchant rule learning / exclusion rule (performs single consolidated selective saveToStorage)
+    if (applyFutureToSave && targetMerchant) {
+      if (isConsumer) {
+        GlobalMockDataStore.saveUserMerchantLearning(
+          txToSave.merchantOriginal || targetMerchant,
+          targetMerchant,
+          majorToSave,
+          minorToSave
+        );
+      } else {
+        const userExRule: ExclusionRule = {
+          id: `user-ex-rule-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          patterns: Array.from(new Set([targetMerchant, txToSave.merchantOriginal || targetMerchant])).filter(Boolean),
+          matchType: 'contains',
+          exclusionType: getExclusionReasonLabel(exclusionReasonToSave),
+          exclusionReason: exclusionReasonToSave,
+          dashboardTreatment: 'exclude',
+          debtTreatment: 'none',
+          isActive: true,
+        };
+        GlobalMockDataStore.saveExclusionRule(userExRule, true);
+        GlobalMockDataStore.saveToStorage({ domain: 'ledger_and_master' });
+      }
+    } else if (storeChanged) {
+      try {
+        GlobalMockDataStore.saveToStorage({ domain: 'ledger' });
+      } catch (e) {
+        console.error(e);
+      }
+    }
   };
 
   const handleStep4Complete = () => {
@@ -1306,15 +1649,34 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
       now.getMinutes()
     ).padStart(2, '0')}`;
 
+    const finalTotalIncome = (currentRecord.incomes || []).reduce(
+      (sum, income) => sum + (Number(income.amount) || 0),
+      0
+    );
+
+    const finalLivingExpense = consumerExpense;
+    const finalFinancialCost = financialCostResult.totalCost;
+    const finalPrincipalRepayment = debtPrincipal;
+    const finalSavingsInvestment = totalSavings;
+    const finalTaxAndPublicCharges = taxAndPublicCharges;
+    const finalTotalCashOutflow = finalLivingExpense + finalFinancialCost + finalPrincipalRepayment + finalSavingsInvestment + finalTaxAndPublicCharges;
+    const finalNetCashFlow = finalTotalIncome - finalTotalCashOutflow;
+
     setTimeout(() => {
       setIsCompleting(false);
-      setGlobalSelectedMonth(selectedMonth);
+      setSelectedMonth(selectedMonth);
       updateCurrentRecord((rec) => ({
         ...rec,
         status: '결산잠금', // Lock status (Requirement 2)
-        financialCost: financialCostResult.totalCost, // Save financial cost snapshot at lock time
-        totalOutflow: totalCashOutflow,
-        netCashFlow: netCashFlow,
+        totalIncome: finalTotalIncome,
+        livingExpense: finalLivingExpense,
+        financialCost: finalFinancialCost,
+        principalRepayment: finalPrincipalRepayment,
+        savingsInvestment: finalSavingsInvestment,
+        taxAndPublicCharges: finalTaxAndPublicCharges,
+        totalCashOutflow: finalTotalCashOutflow,
+        totalOutflow: finalTotalCashOutflow,
+        netCashFlow: finalNetCashFlow,
         completedAtDate: dateStr,
         completedAtTime: timeStr,
       }));
@@ -1350,7 +1712,16 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
 
   const isLockedSettlement = currentRecord.status === '결산잠금' || currentRecord.status === '완료';
 
-  const totalIncome = (isLockedSettlement && currentRecord.totalIncome !== undefined && currentRecord.totalIncome !== null)
+  const incomeSum = (currentRecord.incomes || []).reduce(
+    (sum, inc) => sum + (Number(inc.amount) || 0),
+    0
+  );
+  const hasLegacyIncomeMismatch =
+    currentRecord.totalIncome === 0 &&
+    (currentRecord.incomes || []).length > 0 &&
+    incomeSum > 0;
+
+  const totalIncome = (isLockedSettlement && currentRecord.totalIncome !== undefined && currentRecord.totalIncome !== null && !hasLegacyIncomeMismatch)
     ? Number(currentRecord.totalIncome)
     : calculatedTotalIncome;
 
@@ -1366,7 +1737,8 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   // Living category breakdown
   const livingCategoryMap: Record<string, { amount: number; count: number }> = {};
   consumerTransactions.forEach((t) => {
-    const cat = t.category || '기타소비';
+    const clsMajor = t.classification?.majorCategory;
+    const cat = clsMajor || parseCategoryString(t.category || '').major || '기타';
     if (!livingCategoryMap[cat]) {
       livingCategoryMap[cat] = { amount: 0, count: 0 };
     }
@@ -1449,11 +1821,17 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
     ? Number(currentRecord.principalRepayment ?? currentRecord.debtPrincipalRepayment)
     : calculatedDebtPrincipal;
 
+  const taxTransactions = currentRecord.transactions.filter(isTaxTransaction);
+  const calculatedTaxAndPublicCharges = taxTransactions.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const taxAndPublicCharges = (isLockedSettlement && currentRecord.taxAndPublicCharges !== undefined && currentRecord.taxAndPublicCharges !== null)
+    ? Number(currentRecord.taxAndPublicCharges)
+    : calculatedTaxAndPublicCharges;
+
   const totalCashOutflow = (isLockedSettlement && currentRecord.totalCashOutflow !== undefined && currentRecord.totalCashOutflow !== null)
     ? Number(currentRecord.totalCashOutflow)
-    : (consumerExpense + financialCost + debtPrincipal + totalSavings);
+    : (consumerExpense + financialCost + debtPrincipal + totalSavings + taxAndPublicCharges);
 
-  const netCashFlow = (isLockedSettlement && currentRecord.netCashFlow !== undefined && currentRecord.netCashFlow !== null)
+  const netCashFlow = (isLockedSettlement && currentRecord.netCashFlow !== undefined && currentRecord.netCashFlow !== null && !hasLegacyIncomeMismatch)
     ? Number(currentRecord.netCashFlow)
     : (totalIncome - totalCashOutflow);
 
@@ -1465,18 +1843,36 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
 
   const unclassifiedCount = currentRecord.transactions.filter((t) => {
     const cls = t.classification;
-    return !t.userConfirmed && (t.classificationStatus === 'pending' || (!cls && t.category === '미분류'));
+    const hasValidClassification = Boolean(
+      t.userConfirmed ||
+      cls?.majorCategory ||
+      cls?.classificationType ||
+      (t.category && t.category !== '미분류' && t.category !== '분류 대기' && t.category.trim() !== '')
+    );
+    return !hasValidClassification;
   }).length;
 
   const consumerCount = currentRecord.transactions.filter((t) => {
     const cls = t.classification;
-    const isPending = t.classificationStatus === 'pending' || (!cls && t.category === '미분류' && !t.userConfirmed);
+    const hasValidClassification = Boolean(
+      t.userConfirmed ||
+      cls?.majorCategory ||
+      cls?.classificationType ||
+      (t.category && t.category !== '미분류' && t.category !== '분류 대기' && t.category.trim() !== '')
+    );
+    const isPending = !hasValidClassification;
     return !isPending && (cls ? cls.classificationType === 'consumer' : t.type === 'living');
   }).length;
 
   const excludedCount = currentRecord.transactions.filter((t) => {
     const cls = t.classification;
-    const isPending = t.classificationStatus === 'pending' || (!cls && t.category === '미분류' && !t.userConfirmed);
+    const hasValidClassification = Boolean(
+      t.userConfirmed ||
+      cls?.majorCategory ||
+      cls?.classificationType ||
+      (t.category && t.category !== '미분류' && t.category !== '분류 대기' && t.category.trim() !== '')
+    );
+    const isPending = !hasValidClassification;
     return !isPending && (cls ? cls.classificationType === 'excluded' : (t.type === 'business' || t.type === 'financial' || t.type === 'debt'));
   }).length;
 
@@ -1485,18 +1881,26 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   // Filtered transactions for Step 4
   const filteredTransactions = currentRecord.transactions.filter((t) => {
     const cls = t.classification;
-    const isPending = t.classificationStatus === 'pending' || (!cls && t.category === '미분류' && !t.userConfirmed);
+    const hasValidClassification = Boolean(
+      t.userConfirmed ||
+      cls?.majorCategory ||
+      cls?.classificationType ||
+      (t.category && t.category !== '미분류' && t.category !== '분류 대기' && t.category.trim() !== '')
+    );
+    const isPending = !hasValidClassification;
     const isUserConfirmed = t.userConfirmed || t.classificationStatus === 'user_confirmed';
     const isNeedsReview = !isUserConfirmed && (t.needsReview || cls?.needsConfirmation || t.classificationStatus === 'needs_confirmation');
-    const isConsumer = cls ? cls.classificationType === 'consumer' : t.type === 'living';
-    const isExcluded = cls ? cls.classificationType === 'excluded' : (t.type === 'business' || t.type === 'financial' || t.type === 'debt');
+    const isTax = isTaxTransaction(t);
+    const isConsumer = !isTax && (cls ? cls.classificationType === 'consumer' : t.type === 'living');
+    const isExcluded = !isTax && (cls ? cls.classificationType === 'excluded' : (t.type === 'business' || t.type === 'financial' || t.type === 'debt' || t.analysisStatus === 'excluded'));
 
     if (reviewFilter === 'needsReview') {
       if (!isNeedsReview) return false;
     } else if (reviewFilter === 'consumer') {
       if (!isConsumer || isPending) return false;
       if (consumerSubFilter !== 'all') {
-        if (cls?.majorCategory !== consumerSubFilter) return false;
+        const major = cls?.majorCategory || parseCategoryString(t.category || '').major;
+        if (major !== consumerSubFilter) return false;
       }
     } else if (reviewFilter === 'excluded') {
       if (!isExcluded || isPending) return false;
@@ -1784,32 +2188,63 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
               </div>
             </div>
 
-            {/* 4. 저축·투자 Card */}
-            <div
-              onClick={() => setExpandedCard(expandedCard === 'savings' ? 'none' : 'savings')}
-              className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-2xs flex justify-between items-center ${
-                expandedCard === 'savings'
-                  ? 'bg-[#e8f5e9] border-[#006c49] ring-2 ring-[#006c49]/20'
-                  : 'bg-[#f0f4fd] border-[#00236f]/20 hover:border-[#006c49]/50'
-              }`}
-            >
-              <div>
-                <div className="flex items-center gap-1.5 mb-0.5">
-                  <span className="material-symbols-outlined text-base text-[#006c49]">savings</span>
-                  <span className="text-[#00236f] font-bold">저축·투자 (자산증가)</span>
+            {/* 4. 저축·투자 Card & 5. 세금·공과 Card */}
+            <div className={`grid gap-3 ${(taxAndPublicCharges > 0 || normSelectedMonth.yyyyMm >= '2026-07') ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
+              <div
+                onClick={() => setExpandedCard(expandedCard === 'savings' ? 'none' : 'savings')}
+                className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-2xs flex justify-between items-center ${
+                  expandedCard === 'savings'
+                    ? 'bg-[#e8f5e9] border-[#006c49] ring-2 ring-[#006c49]/20'
+                    : 'bg-[#f0f4fd] border-[#00236f]/20 hover:border-[#006c49]/50'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className="material-symbols-outlined text-base text-[#006c49]">savings</span>
+                    <span className="text-[#00236f] font-bold">저축·투자 (자산증가)</span>
+                  </div>
+                  <span className="text-[11px] text-[#757682]">
+                    {currentRecord.savingsInvestments.length}건 등록 • 클릭 시 상세 목록 보기
+                  </span>
                 </div>
-                <span className="text-[11px] text-[#757682]">
-                  {currentRecord.savingsInvestments.length}건 등록 • 클릭 시 상세 목록 보기
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="font-dohyeon text-lg text-[#006c49]">
+                    +{formatKRW(totalSavings)}원
+                  </span>
+                  <span className="material-symbols-outlined text-sm text-[#757682]">
+                    {expandedCard === 'savings' ? 'expand_less' : 'expand_more'}
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="font-dohyeon text-lg text-[#006c49]">
-                  +{formatKRW(totalSavings)}원
-                </span>
-                <span className="material-symbols-outlined text-sm text-[#757682]">
-                  {expandedCard === 'savings' ? 'expand_less' : 'expand_more'}
-                </span>
-              </div>
+
+              {(taxAndPublicCharges > 0 || normSelectedMonth.yyyyMm >= '2026-07') && (
+                <div
+                  onClick={() => setExpandedCard(expandedCard === 'tax' ? 'none' : 'tax')}
+                  className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-2xs flex justify-between items-center ${
+                    expandedCard === 'tax'
+                      ? 'bg-[#fefce8] border-[#854d0e] ring-2 ring-[#854d0e]/20'
+                      : 'bg-white border-[#c5c5d3]/30 hover:border-[#854d0e]/50'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span className="material-symbols-outlined text-base text-[#854d0e]">receipt_long</span>
+                      <span className="text-[#854d0e] font-bold">세금·공과</span>
+                    </div>
+                    <span className="text-[11px] text-[#757682]">
+                      {taxTransactions.length}건 지출 • 클릭 시 상세 목록 보기
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-dohyeon text-lg text-[#854d0e]">
+                      -{formatKRW(taxAndPublicCharges)}원
+                    </span>
+                    <span className="material-symbols-outlined text-sm text-[#757682]">
+                      {expandedCard === 'tax' ? 'expand_less' : 'expand_more'}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* ================= Expanded Details Panels ================= */}
@@ -1867,9 +2302,10 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
 
                 {/* Selected Category Detail List or Initial Guidance */}
                 {selectedLivingCategory ? (() => {
-                  const categoryTxs = consumerTransactions.filter(
-                    (t) => (t.category || '기타소비') === selectedLivingCategory
-                  );
+                  const categoryTxs = consumerTransactions.filter((t) => {
+                    const major = t.classification?.majorCategory || parseCategoryString(t.category || '').major;
+                    return major === selectedLivingCategory;
+                  });
                   const categoryTotal = categoryTxs.reduce(
                     (s, t) => s + (Number(t.amount) || 0),
                     0
@@ -2131,68 +2567,142 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                 )}
               </div>
             )}
+
+            {expandedCard === 'tax' && (
+              <div className="bg-white p-5 rounded-2xl border border-[#854d0e]/30 shadow-md space-y-4 animate-in fade-in duration-200">
+                <div className="flex justify-between items-center border-b border-[#eceef0] pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[#854d0e]">receipt_long</span>
+                    <div>
+                      <h4 className="font-dohyeon text-base text-[#191c1e]">세금·공과 산출 근거 상세</h4>
+                      <p className="text-[11px] text-[#757682]">국세, 지방세, 부가세, 재산세 등 세금 지출 내역 ({taxTransactions.length}건)</p>
+                    </div>
+                  </div>
+                  <span className="font-dohyeon text-base text-[#854d0e]">-{formatKRW(taxAndPublicCharges)}원</span>
+                </div>
+
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                  {taxTransactions.length === 0 ? (
+                    <p className="text-xs text-[#757682] text-center py-4">등록된 세금·공과 내역이 없습니다.</p>
+                  ) : (
+                    taxTransactions.map((tx) => (
+                      <div key={tx.id} className="bg-[#fefce8]/60 p-3 rounded-xl border border-[#fef08a] flex justify-between items-center text-xs">
+                        <div>
+                          <span className="font-bold text-[#191c1e] block">{tx.merchant}</span>
+                          <span className="text-[10px] text-[#757682]">{tx.date} • {tx.category || '세금·공과'}</span>
+                        </div>
+                        <span className="font-dohyeon text-sm text-[#854d0e]">
+                          -{formatKRW(tx.amount)}원
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </section>
 
           {/* AI Monthly Report Section */}
           <section className="bg-white p-5 rounded-2xl border border-[#c5c5d3]/30 shadow-xs space-y-4">
-            <div className="flex items-center gap-2 border-b border-[#eceef0] pb-3">
-              <div className="w-8 h-8 rounded-full bg-[#00236f] text-[#6cf8bb] flex items-center justify-center">
-                <span className="material-symbols-outlined text-lg">smart_toy</span>
-              </div>
-              <div>
-                <h3 className="font-dohyeon text-base text-[#00236f]">
-                  AI 월간 CFO 리포트
-                </h3>
-                <p className="text-[11px] text-[#757682]">
-                  {selectedMonth} 확정 데이터 기준
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-3 text-xs text-[#191c1e] leading-relaxed">
-              <div className="bg-[#f7f9fb] p-3.5 rounded-xl border border-[#c5c5d3]/20">
-                <span className="font-bold text-[#00236f] block mb-1">📊 수입 분석</span>
-                <p className="text-[#444651]">
-                  이번 달 총 수입은{' '}
-                  <span className="font-bold text-[#00236f]">
-                    {formatKRW(totalIncome)}원
-                  </span>
-                  으로 미용실 및 임대사업에서 고르게 발생했습니다.
-                </p>
-              </div>
-
-              <div className="bg-[#f7f9fb] p-3.5 rounded-xl border border-[#c5c5d3]/20">
-                <span className="font-bold text-[#00236f] block mb-1">🏠 지출 및 자산 축적</span>
-                <p className="text-[#444651]">
-                  생활지출({formatKRW(livingExpense)}원)을 효과적으로 통제하여{' '}
-                  <span className="font-bold text-[#006c49]">
-                    {formatKRW(totalSavings)}원
-                  </span>
-                  의 자산을 성공적으로 적립했습니다.
-                </p>
-              </div>
-
-              {currentRecord.specialNotes && currentRecord.specialNotes.trim() !== '' && (
-                <div className="bg-[#f0fdf4] p-3.5 rounded-xl border border-[#bbf7d0]">
-                  <span className="font-bold text-[#166534] block mb-1">📝 작성하신 특이사항 반영</span>
-                  <p className="text-[#166534]">
-                    기록하신 이번 달 특이사항(&quot;{currentRecord.specialNotes.trim()}&quot;)을 고려할 때, 이번 달 자금 흐름의 변동 요인이 명확히 설명됩니다.
+            <div className="flex items-center justify-between border-b border-[#eceef0] pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-[#00236f] text-[#6cf8bb] flex items-center justify-center">
+                  <span className="material-symbols-outlined text-lg">smart_toy</span>
+                </div>
+                <div>
+                  <h3 className="font-dohyeon text-base text-[#00236f]">
+                    AI 월간 CFO 리포트
+                  </h3>
+                  <p className="text-[11px] text-[#757682]">
+                    {selectedMonth} 확정 재무 데이터 기반
                   </p>
                 </div>
-              )}
-
-              <div className="bg-[#f0f4fd] p-3.5 rounded-xl border border-[#00236f]/20">
-                <span className="font-bold text-[#00236f] block mb-1">
-                  💡 다음 달 자금운용 핵심 제안
-                </span>
-                <p className="text-[#00236f]">
-                  대출 원금 상환 비중을 유지하고, 예비비를 가계/사업 통장에 분리해 잉여 자금을 체계적으로 관리하세요.
-                  {currentRecord.specialNotes && currentRecord.specialNotes.trim() !== ''
-                    ? ` (작성하신 특이사항 '${currentRecord.specialNotes.trim()}' 관련 자금 후속 관리도 함께 유의하세요.)`
-                    : ''}
-                </p>
               </div>
+
+              <button
+                type="button"
+                onClick={handleRunAiAnalysis}
+                disabled={isAiLoading}
+                className="px-3.5 py-1.5 bg-[#00236f] hover:bg-[#1e3a8a] text-[#6ffbbe] hover:text-white text-xs font-dohyeon rounded-xl transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95 disabled:opacity-50"
+              >
+                <span className={`material-symbols-outlined text-sm ${isAiLoading ? 'animate-spin' : ''}`}>
+                  {isAiLoading ? 'sync' : 'auto_awesome'}
+                </span>
+                {isAiLoading ? '분석 중...' : (aiAnalysis ? '다시 분석하기' : 'AI 분석하기')}
+              </button>
             </div>
+
+            {aiError && (
+              <div className="bg-[#fff1f2] p-3 rounded-xl border border-[#fecdd3] text-xs text-[#be123c] flex items-center gap-2">
+                <span className="material-symbols-outlined text-sm">error</span>
+                <span>{aiError}</span>
+              </div>
+            )}
+
+            {isAiLoading ? (
+              <div className="py-8 text-center text-[#757682] space-y-2 bg-[#f8f9fc] rounded-xl border border-[#e1e2ec]">
+                <span className="material-symbols-outlined text-2xl animate-spin text-[#00236f]">progress_activity</span>
+                <p className="text-xs font-medium text-[#191c1e]">{selectedMonth} 재무 흐름과 특이사항을 심층 분석하고 있습니다...</p>
+              </div>
+            ) : aiAnalysis ? (
+              <div className="space-y-3 text-xs text-[#191c1e] leading-relaxed">
+                {/* 1. 🧠 CFO가 발견한 것 (Key Findings) */}
+                {aiAnalysis.keyFindings && aiAnalysis.keyFindings.length > 0 && (
+                  <div className="bg-[#f7f9fb] p-4 rounded-xl border border-[#c5c5d3]/20 space-y-2">
+                    <span className="font-bold text-[#00236f] flex items-center gap-1.5 text-xs">
+                      <span className="material-symbols-outlined text-sm text-[#00236f]">psychology</span>
+                      🧠 CFO가 발견한 것
+                    </span>
+                    <div className="space-y-1.5 pl-5">
+                      {aiAnalysis.keyFindings.map((finding, idx) => (
+                        <p key={idx} className="text-[#333544] list-item list-disc">
+                          {finding}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. ❓ 확인하면 좋은 점 (Question) - 조건부 표시 */}
+                {aiAnalysis.question && aiAnalysis.question.trim() !== '' && (
+                  <div className="bg-[#fffbeb] p-4 rounded-xl border border-[#fde68a] space-y-1.5">
+                    <span className="font-bold text-[#b45309] flex items-center gap-1.5 text-xs">
+                      <span className="material-symbols-outlined text-sm text-[#b45309]">help</span>
+                      ❓ 확인하면 좋은 점
+                    </span>
+                    <p className="text-[#92400e] pl-5">
+                      {aiAnalysis.question}
+                    </p>
+                  </div>
+                )}
+
+                {/* 3. 🎯 다음 행동 (Actions) - 조건부 표시 */}
+                {aiAnalysis.actions && aiAnalysis.actions.length > 0 && (
+                  <div className="bg-[#f0fdf4] p-4 rounded-xl border border-[#bbf7d0] space-y-2">
+                    <span className="font-bold text-[#166534] flex items-center gap-1.5 text-xs">
+                      <span className="material-symbols-outlined text-sm text-[#166534]">task_alt</span>
+                      🎯 다음 행동 제안
+                    </span>
+                    <div className="space-y-1.5 pl-5">
+                      {aiAnalysis.actions.map((action, idx) => (
+                        <p key={idx} className="text-[#15803d] list-item list-disc">
+                          {action}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="bg-[#f8f9fc] p-4 rounded-xl border border-[#e1e2ec] text-xs text-[#555770] leading-relaxed flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-[#191c1e] mb-0.5">인공지능 CFO의 다차원 재무 리포트</p>
+                  <p className="text-[#757682] text-[11px]">
+                    상단의 <strong className="text-[#00236f]">[AI 분석하기]</strong> 버튼을 누르면 수입, 소비, 세금, 금융비용의 인과관계를 종합 분석합니다.
+                  </p>
+                </div>
+              </div>
+            )}
           </section>
 
           {/* Unlock / Re-edit Button */}
@@ -3479,15 +3989,27 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                     const txType = tx.transactionType;
                     const memo = tx.transferMemo;
 
-                    const isPending = tx.classificationStatus === 'pending' || (!cls && tx.category === '미분류' && !tx.userConfirmed);
+                    const hasValidClassification = Boolean(
+                      tx.userConfirmed ||
+                      cls?.majorCategory ||
+                      cls?.classificationType ||
+                      (tx.category && tx.category !== '미분류' && tx.category !== '분류 대기' && tx.category.trim() !== '')
+                    );
+                    const isPending = !hasValidClassification;
                     const isUserConfirmed = tx.userConfirmed || tx.classificationStatus === 'user_confirmed';
                     const isNeedsReview = !isUserConfirmed && (tx.needsReview || cls?.needsConfirmation || tx.classificationStatus === 'needs_confirmation');
 
-                    const isConsumer = cls ? cls.classificationType === 'consumer' : tx.type === 'living';
-                    const isExcluded = cls ? cls.classificationType === 'excluded' : (tx.type === 'business' || tx.type === 'financial' || tx.type === 'debt');
+                    const isTax = isTaxTransaction(tx);
+                    const isConsumer = !isTax && (cls ? cls.classificationType === 'consumer' : tx.type === 'living');
+                    const isExcluded = !isTax && (cls ? cls.classificationType === 'excluded' : (tx.type === 'business' || tx.type === 'financial' || tx.type === 'debt' || tx.analysisStatus === 'excluded'));
 
-                    const majorCat = cls?.majorCategory;
-                    const minorCat = cls?.minorCategory;
+                    const parsedCat = parseCategoryString(
+                      cls?.majorCategory && cls?.minorCategory
+                        ? `${cls.majorCategory} > ${cls.minorCategory}`
+                        : cls?.majorCategory || tx.category || ''
+                    );
+                    const majorCat = cls?.majorCategory || parsedCat.major;
+                    const minorCat = cls?.minorCategory || parsedCat.minor;
                     const exclusionReason = cls?.exclusionReason;
                     const exclusionType = cls?.exclusionType || (exclusionReason ? getExclusionReasonLabel(exclusionReason) : '제외');
                     const userQuestion = cls?.userQuestion;
@@ -3533,6 +4055,18 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                                 <span className="text-[10px] bg-[#fef3c7] text-[#92400e] px-1.5 py-0.5 rounded font-bold border border-[#fde68a]">
                                   ⏳ 분류 대기
                                 </span>
+                              ) : isTax ? (
+                                <>
+                                  <span className="text-[10px] bg-[#fef3c7] text-[#854d0e] px-1.5 py-0.5 rounded font-bold">
+                                    🏛️ 세금·공과
+                                  </span>
+                                  <span className="text-[11px] text-[#854d0e] font-semibold">
+                                    세금·공과
+                                  </span>
+                                  <span className="text-[10px] bg-[#fef9c3] text-[#854d0e] px-1.5 py-0.5 rounded font-medium">
+                                    세금·공과 포함
+                                  </span>
+                                </>
                               ) : isExcluded ? (
                                 <>
                                   <span className="text-[10px] bg-[#fef2f2] text-[#991b1b] px-1.5 py-0.5 rounded font-bold">
@@ -3551,7 +4085,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                                     🛍️ 소비
                                   </span>
                                   <span className="text-[11px] text-[#191c1e] font-semibold">
-                                    {majorCat || '식비'}{minorCat ? ` > ${minorCat}` : ''}
+                                    {majorCat || '기타'}{minorCat ? ` > ${minorCat}` : ''}
                                   </span>
                                   <span className="text-[10px] bg-[#e6f4ed] text-[#006c49] px-1.5 py-0.5 rounded font-medium">
                                     가계소비 포함
@@ -3648,7 +4182,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
 
           {/* Edit Transaction Classification Modal */}
           {editingTx && (
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div data-debug-modal="tx-classification" className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
               <div className="bg-white w-full max-w-md rounded-2xl p-5 space-y-4 animate-fadeIn max-h-[90vh] overflow-y-auto">
                 <div className="flex justify-between items-center border-b pb-2">
                   <h4 className="font-dohyeon text-base text-[#00236f]">
@@ -3676,12 +4210,12 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                   </span>
                 </div>
 
-                {/* Primary Choice: 소비 vs 제외 */}
+                {/* Primary Choice: 소비 vs 세금·공과 vs 제외 */}
                 <div className="space-y-1.5 text-xs">
                   <label className="font-bold text-[#444651] block">
                     1. 분류 유형 선택
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
                       onClick={() => {
@@ -3691,7 +4225,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                           setModalMinorCat('외식');
                         }
                       }}
-                      className={`p-3 rounded-xl font-bold transition-all text-center cursor-pointer ${
+                      className={`p-2.5 rounded-xl font-bold transition-all text-center cursor-pointer text-xs ${
                         modalChoice === 'consumer'
                           ? 'bg-[#00236f] text-white shadow-sm ring-2 ring-[#00236f]/30'
                           : 'bg-[#f0f4fd] text-[#00236f] hover:bg-[#e0ecfe]'
@@ -3701,8 +4235,19 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                     </button>
                     <button
                       type="button"
+                      onClick={() => setModalChoice('tax')}
+                      className={`p-2.5 rounded-xl font-bold transition-all text-center cursor-pointer text-xs ${
+                        modalChoice === 'tax'
+                          ? 'bg-[#854d0e] text-white shadow-sm ring-2 ring-[#854d0e]/30'
+                          : 'bg-[#fefce8] text-[#854d0e] hover:bg-[#fef08a]'
+                      }`}
+                    >
+                      🏛️ 세금·공과
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setModalChoice('excluded')}
-                      className={`p-3 rounded-xl font-bold transition-all text-center cursor-pointer ${
+                      className={`p-2.5 rounded-xl font-bold transition-all text-center cursor-pointer text-xs ${
                         modalChoice === 'excluded'
                           ? 'bg-[#991b1b] text-white shadow-sm ring-2 ring-[#991b1b]/30'
                           : 'bg-[#fef2f2] text-[#991b1b] hover:bg-[#fee2e2]'
@@ -3713,7 +4258,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                   </div>
                 </div>
 
-                {/* Consumer Category Selection */}
+                {/* Classification Options Based on Choice */}
                 {modalChoice === 'consumer' ? (
                   <div className="space-y-3 pt-1 text-xs">
                     <div>
@@ -3763,6 +4308,14 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                         ))}
                       </div>
                     </div>
+                  </div>
+                ) : modalChoice === 'tax' ? (
+                  <div className="bg-[#fefce8] p-3.5 rounded-xl border border-[#fef08a] text-xs text-[#854d0e] space-y-1.5 my-2">
+                    <span className="font-bold block text-xs">🏛️ 세금·공과 현금유출 항목</span>
+                    <p className="text-[11px] leading-relaxed">
+                      국세, 지방세, 부가세, 재산세, 자동차세 등 세금 및 공과금 지출 항목입니다.
+                      생활지출에서 완전히 제외되고, 5번째 정식 현금유출 항목으로 집계됩니다.
+                    </p>
                   </div>
                 ) : (
                   /* Excluded Reason Selection */
@@ -3861,6 +4414,31 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                     <span className="font-dohyeon text-sm text-[#ba1a1a]">
                       -{formatKRW(totalCashOutflow)}원
                     </span>
+                  </div>
+
+                  <div className="pl-2 space-y-1 text-[11px] text-[#757682] border-l-2 border-[#00236f]/15 my-1">
+                    <div className="flex justify-between">
+                      <span>• 생활지출</span>
+                      <span>{formatKRW(consumerExpense)}원</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>• 금융비용 (이자)</span>
+                      <span>{formatKRW(financialCost)}원</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>• 부채상환 원금</span>
+                      <span>{formatKRW(debtPrincipal)}원</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>• 저축·투자</span>
+                      <span>{formatKRW(totalSavings)}원</span>
+                    </div>
+                    {taxAndPublicCharges > 0 && (
+                      <div className="flex justify-between font-semibold text-[#854d0e]">
+                        <span>• 세금·공과</span>
+                        <span>{formatKRW(taxAndPublicCharges)}원</span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex justify-between items-center pt-2 border-t border-[#00236f]/15">

@@ -101,9 +101,13 @@ export const fetchMasterFromFirestore = async (): Promise<MasterData | null> => 
  * Saves or updates Master Data in Firestore (OWNER only).
  */
 export const saveMasterToFirestore = async (data: MasterData): Promise<void> => {
-  const docRef = doc(db, 'households', HOUSEHOLD_ID, 'master', 'current');
-  const payload = removeUndefinedFields({ ...data, updatedAt: new Date().toISOString() });
-  await setDoc(docRef, payload, { merge: true });
+  try {
+    const docRef = doc(db, 'households', HOUSEHOLD_ID, 'master', 'current');
+    const payload = removeUndefinedFields({ ...data, updatedAt: new Date().toISOString() });
+    await setDoc(docRef, payload, { merge: true });
+  } catch (err) {
+    console.warn('Firestore: saveMasterToFirestore failed (quota or network error):', err);
+  }
 };
 
 // ==========================================
@@ -169,14 +173,18 @@ export const saveSnapshotToFirestore = async (
     debtMovements: MonthlyDebtMovement[];
   }
 ): Promise<void> => {
-  const docRef = doc(db, 'households', HOUSEHOLD_ID, 'snapshots', monthKey);
-  const docData: SnapshotDocData = {
-    monthKey,
-    ...snapshotData,
-    updatedAt: new Date().toISOString(),
-  };
-  const payload = removeUndefinedFields(docData);
-  await setDoc(docRef, payload, { merge: true });
+  try {
+    const docRef = doc(db, 'households', HOUSEHOLD_ID, 'snapshots', monthKey);
+    const docData: SnapshotDocData = {
+      monthKey,
+      ...snapshotData,
+      updatedAt: new Date().toISOString(),
+    };
+    const payload = removeUndefinedFields(docData);
+    await setDoc(docRef, payload, { merge: true });
+  } catch (err) {
+    console.warn(`Firestore: saveSnapshotToFirestore failed for ${monthKey}:`, err);
+  }
 };
 
 // ==========================================
@@ -217,15 +225,19 @@ export const saveMonthlySettlementToFirestore = async (
   settlementData: SettlementData,
   confirmedAt?: string
 ): Promise<void> => {
-  const docRef = doc(db, 'households', HOUSEHOLD_ID, 'monthlySettlements', monthKey);
-  const data: SettlementDocData = {
-    monthKey,
-    settlementData,
-    confirmedAt,
-    updatedAt: new Date().toISOString(),
-  };
-  const payload = removeUndefinedFields(data);
-  await setDoc(docRef, payload, { merge: true });
+  try {
+    const docRef = doc(db, 'households', HOUSEHOLD_ID, 'monthlySettlements', monthKey);
+    const data: SettlementDocData = {
+      monthKey,
+      settlementData,
+      confirmedAt,
+      updatedAt: new Date().toISOString(),
+    };
+    const payload = removeUndefinedFields(data);
+    await setDoc(docRef, payload, { merge: true });
+  } catch (err) {
+    console.warn(`Firestore: saveMonthlySettlementToFirestore failed for ${monthKey}:`, err);
+  }
 };
 
 export interface MonthlySettlementRecordDocData {
@@ -330,8 +342,7 @@ export const saveSpecialNotesToFirestore = async (
     }
     console.log(`Firestore: Saved specialNotes for monthlySettlements/${monthKey} successfully.`);
   } catch (err) {
-    console.error(`Firestore: Failed to save specialNotes for monthlySettlements/${monthKey}:`, err);
-    throw err;
+    console.warn(`Firestore: Failed to save specialNotes for monthlySettlements/${monthKey}:`, err);
   }
 };
 
@@ -407,9 +418,13 @@ export const saveLedgerToFirestore = async (ledgerData: {
   transactions: Transaction[];
   activeCsvSession?: ActiveCsvSession;
 }): Promise<void> => {
-  const docRef = doc(db, 'households', HOUSEHOLD_ID, 'ledger', 'current');
-  const payload = removeUndefinedFields({ ...ledgerData, updatedAt: new Date().toISOString() });
-  await setDoc(docRef, payload, { merge: true });
+  try {
+    const docRef = doc(db, 'households', HOUSEHOLD_ID, 'ledger', 'current');
+    const payload = removeUndefinedFields({ ...ledgerData, updatedAt: new Date().toISOString() });
+    await setDoc(docRef, payload, { merge: true });
+  } catch (err) {
+    console.warn('Firestore: saveLedgerToFirestore failed (quota or network error):', err);
+  }
 };
 
 // ==========================================
@@ -448,9 +463,13 @@ export const savePlannerToFirestore = async (plannerData: {
   onboardingGoals: OnboardingGoal[];
   schedules: ScheduleEvent[];
 }): Promise<void> => {
-  const docRef = doc(db, 'households', HOUSEHOLD_ID, 'planner', 'current');
-  const payload = removeUndefinedFields({ ...plannerData, updatedAt: new Date().toISOString() });
-  await setDoc(docRef, payload, { merge: true });
+  try {
+    const docRef = doc(db, 'households', HOUSEHOLD_ID, 'planner', 'current');
+    const payload = removeUndefinedFields({ ...plannerData, updatedAt: new Date().toISOString() });
+    await setDoc(docRef, payload, { merge: true });
+  } catch (err) {
+    console.warn('Firestore: savePlannerToFirestore failed (quota or network error):', err);
+  }
 };
 
 // ==========================================

@@ -12,6 +12,7 @@ import {
   INITIAL_CATEGORY_RULES,
   getExclusionReasonLabel,
 } from '../data/initialClassificationRules';
+import { CONSUMER_CATEGORIES } from '../data/consumerCategories';
 
 /**
  * 거래처명 정규화
@@ -440,17 +441,132 @@ function mapToExclusionReasonCode(reasonOrType: string | undefined | null): Excl
   return 'unknown';
 }
 
+export interface CsvUserCategoryMapping {
+  classificationType: 'consumer' | 'excluded' | 'tax';
+  majorCategory?: string | null;
+  minorCategory?: string | null;
+  exclusionReason?: ExclusionReasonCode | null;
+  exclusionType?: string | null;
+  included: boolean;
+}
+
+/**
+ * CSV 사용자 지정 구분값 Mapping Helper
+ */
+export function parseCsvUserCategory(transactionType?: string | null): CsvUserCategoryMapping | null {
+  if (!transactionType) return null;
+  const raw = transactionType.trim();
+  if (!raw) return null;
+
+  // 0) 세금_공과 / 세금·공과
+  if (raw === '세금_공과' || raw === '세금·공과' || raw === '세금공과' || raw === '세금/공과') {
+    return {
+      classificationType: 'tax',
+      majorCategory: '세금·공과',
+      minorCategory: '세금·공과',
+      included: true,
+    };
+  }
+
+  // 1) 결산제외 / 제외
+  if (raw === '결산제외' || raw === '결산 제외' || raw === '제외') {
+    return {
+      classificationType: 'excluded',
+      majorCategory: null,
+      minorCategory: null,
+      exclusionReason: 'unknown',
+      exclusionType: '결산 제외',
+      included: false,
+    };
+  }
+
+  // 2) 취소 / 취소된거래
+  if (raw === '취소' || raw === '취소된거래' || raw === '취소 거래') {
+    return {
+      classificationType: 'excluded',
+      majorCategory: null,
+      minorCategory: null,
+      exclusionReason: 'unknown',
+      exclusionType: '취소 거래',
+      included: false,
+    };
+  }
+
+  // 3) 특정 약어 및 명시 카테고리 매핑
+  if (raw === '가족_여가' || raw === '가족 > 여가' || raw === '가족_여가문화' || raw === '가족 > 여가문화') {
+    return {
+      classificationType: 'consumer',
+      majorCategory: '가족',
+      minorCategory: '여가문화',
+      included: true,
+    };
+  }
+
+  // 4) 일반 공식 카테고리 매핑 (Major > Minor 또는 Major_Minor)
+  let majorCandidate = '';
+  let minorCandidate = '';
+
+  if (raw.includes('>')) {
+    const parts = raw.split('>').map((s) => s.trim());
+    majorCandidate = parts[0];
+    minorCandidate = parts[1];
+  } else if (raw.includes('_')) {
+    const parts = raw.split('_').map((s) => s.trim());
+    majorCandidate = parts[0];
+    minorCandidate = parts[1];
+  }
+
+  if (majorCandidate && minorCandidate && CONSUMER_CATEGORIES[majorCandidate]) {
+    const validSubcategories = CONSUMER_CATEGORIES[majorCandidate];
+    const exactSub = validSubcategories.find((s) => s === minorCandidate);
+    if (exactSub) {
+      return {
+        classificationType: 'consumer',
+        majorCategory: majorCandidate,
+        minorCategory: exactSub,
+        included: true,
+      };
+    }
+    const partialSub = validSubcategories.find((s) => s.includes(minorCandidate) || minorCandidate.includes(s));
+    if (partialSub) {
+      return {
+        classificationType: 'consumer',
+        majorCategory: majorCandidate,
+        minorCategory: partialSub,
+        included: true,
+      };
+    }
+  }
+
+  // 5) CONSUMER_CATEGORIES에 완전 일치하는 형태 확인
+  for (const [groupName, subCats] of Object.entries(CONSUMER_CATEGORIES)) {
+    for (const sub of subCats) {
+      if (raw === `${groupName} > ${sub}` || raw === `${groupName}_${sub}`) {
+        return {
+          classificationType: 'consumer',
+          majorCategory: groupName,
+          minorCategory: sub,
+          included: true,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
 /**
  * 공통 분류 함수: classifyTransaction
  * 우선순위:
  * 1. User Confirmed Rule
- * 2. Merchant Exact Rule
- * 3. Merchant Contains / Alias / Keyword Rule
- * 4. Exclusion Rule
- * 5. Category Keyword Rule
- * 6. Industry Rule & Pattern Rule
- * 7. AI Recommendation
- * 8. Needs Confirmation
+ * 2. CSV User Explicit Classification
+ * 3. Merchant Exact Rule
+ * 4. Merchant Contains / Alias / Keyword Rule
+ * 5. Exclusion Rule
+ * 6. Category Keyword Rule
+ * 7. Industry Rule & Pattern Rule
+ * 8. AI Recommendation
+ * 9. Needs Confirmation
  */
 export function classifyTransaction(
   merchantRaw: string,
@@ -458,6 +574,7 @@ export function classifyTransaction(
     rules?: MerchantRule[];
     exclusionRules?: ExclusionRule[];
     categoryRules?: CategoryRule[];
+    transactionType?: string;
   }
 ): ClassificationResult {
   const merchantOriginal = merchantRaw || '';
@@ -489,7 +606,42 @@ export function classifyTransaction(
     });
   }
 
-  // 2. Merchant Master - 정확한 거래처명 일치 (우선순위 2)
+  // 2. CSV 사용자 지정 구분값 (우선순위 2)
+  const csvCategoryMapping = parseCsvUserCategory(context?.transactionType);
+  if (csvCategoryMapping) {
+    if (csvCategoryMapping.classificationType === 'excluded') {
+      return buildClassificationResult('confirmed', true, {
+        merchantOriginal,
+        merchantNormalized,
+        merchantMaster: merchantOriginal || null,
+        classificationType: 'excluded',
+        majorCategory: null,
+        minorCategory: null,
+        exclusionReason: csvCategoryMapping.exclusionReason || 'unknown',
+        exclusionType: csvCategoryMapping.exclusionType || '결산 제외',
+        included: false,
+        needsConfirmation: false,
+        appliedRuleId: 'csv-explicit',
+        appliedRuleType: 'user-confirmed',
+      });
+    } else {
+      return buildClassificationResult('confirmed', true, {
+        merchantOriginal,
+        merchantNormalized,
+        merchantMaster: merchantOriginal || null,
+        classificationType: 'consumer',
+        majorCategory: csvCategoryMapping.majorCategory,
+        minorCategory: csvCategoryMapping.minorCategory,
+        exclusionReason: null,
+        included: true,
+        needsConfirmation: false,
+        appliedRuleId: 'csv-explicit',
+        appliedRuleType: 'user-confirmed',
+      });
+    }
+  }
+
+  // 3. Merchant Master - 정확한 거래처명 일치 (우선순위 3)
   const exactRule = findExactMerchantRule(merchantNormalized, merchantOriginal, merchantRules);
   if (exactRule) {
     return buildClassificationResult(exactRule.confidence || 'confirmed', exactRule.autoConfirm ?? true, {
@@ -667,13 +819,28 @@ export function reclassifyTransactions(
     rules?: MerchantRule[];
     exclusionRules?: ExclusionRule[];
     categoryRules?: CategoryRule[];
+    transactionType?: string;
   }
 ): any[] {
   return transactions.map((tx) => {
     const classificationText = tx.classificationText || tx.merchantOriginal || tx.merchant || '';
-    const classification = classifyTransaction(classificationText, context);
+    const txType =
+      tx.transactionType ||
+      tx.typeStr ||
+      tx.rawRow?.['구분'] ||
+      tx.rawRow?.['적요'] ||
+      tx.rawRow?.['거래구분'] ||
+      tx.rawRow?.['적요명'] ||
+      undefined;
+
+    const classification = classifyTransaction(classificationText, {
+      ...context,
+      transactionType: txType,
+    });
+
     return {
       ...tx,
+      transactionType: txType || tx.transactionType,
       merchantOriginal: tx.merchantOriginal || tx.merchant || '',
       merchant: classification.merchantMaster || tx.merchant || tx.merchantOriginal,
       classification,

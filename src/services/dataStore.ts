@@ -22,6 +22,7 @@ import {
   ExclusionRule,
   ActiveCsvSession,
 } from '../types';
+import { resolveSpecialNotes } from '../utils/resolveSpecialNotes';
 
 import {
   INITIAL_TRANSACTIONS,
@@ -65,8 +66,12 @@ import {
   fetchAllMonthlySettlementRecordsFromFirestore,
   backfillLocalMonthlySettlementsToFirestore,
   fetchAllSnapshotsFromFirestore,
+  saveMasterToFirestore,
+  saveLedgerToFirestore,
+  savePlannerToFirestore,
   saveAllToFirestoreFromAppData,
   saveSnapshotToFirestore,
+  MasterData,
 } from './firestoreDataService';
 
 // Storage key for persistent mock data in browser session/local storage
@@ -263,11 +268,57 @@ class GlobalMockDataStoreImpl implements IDataStore {
             merged[keyNorm] = v;
           });
 
-          // Apply Firestore records (Firestore primary override)
+          // Apply Firestore records (Firestore primary override, except if local is richer or locked/completed)
           Object.entries(fsSettlementRecords).forEach(([k, v]) => {
             const match = k.match(/(\d{4})년\s*(\d{1,2})월/);
             const keyNorm = match ? `${match[1]}-${String(match[2]).padStart(2, '0')}` : k;
-            merged[keyNorm] = v;
+            const existingLocal = merged[keyNorm];
+
+            const localIsLocked = existingLocal?.status === '결산잠금' || existingLocal?.status === '완료';
+            const remoteIsLocked = (v as any)?.status === '결산잠금' || (v as any)?.status === '완료';
+
+            if (localIsLocked && !remoteIsLocked) {
+              // Protect local locked/completed record from being overwritten by remote stale record
+              return;
+            }
+
+            const notesRes = resolveSpecialNotes(existingLocal, v as any);
+
+            if (existingLocal && existingLocal.incomes && existingLocal.incomes.length > 0 && Number(existingLocal.totalIncome) > 0) {
+              const fsIncomes = (v as any)?.incomes || [];
+              const fsTotalIncome = Number((v as any)?.totalIncome) || 0;
+              if (fsIncomes.length < existingLocal.incomes.length || fsTotalIncome === 0) {
+                merged[keyNorm] = {
+                  ...(v as any),
+                  incomes: existingLocal.incomes,
+                  totalIncome: existingLocal.totalIncome,
+                  netCashFlow: Number(existingLocal.totalIncome) - (Number((v as any)?.totalCashOutflow ?? (v as any)?.totalOutflow) || 0),
+                  specialNotes: notesRes.specialNotes,
+                  noteConfirmedAt: notesRes.noteConfirmedAt,
+                };
+                return;
+              }
+            }
+            merged[keyNorm] = {
+              ...(v as any),
+              specialNotes: notesRes.specialNotes,
+              noteConfirmedAt: notesRes.noteConfirmedAt,
+            };
+          });
+
+          // Sanitize legacy income mismatch (totalIncome === 0 while incomes sum > 0)
+          Object.entries(merged).forEach(([k, rec]: [string, any]) => {
+            if (rec && typeof rec === 'object') {
+              const incSum = (rec.incomes || []).reduce(
+                (sum: number, inc: any) => sum + (Number(inc.amount) || 0),
+                0
+              );
+              if ((rec.totalIncome === 0 || rec.totalIncome === undefined) && (rec.incomes || []).length > 0 && incSum > 0) {
+                rec.totalIncome = incSum;
+                const outflow = Number(rec.totalCashOutflow ?? rec.totalOutflow) || 0;
+                rec.netCashFlow = incSum - outflow;
+              }
+            }
           });
 
           localStorage.setItem('cfo_monthly_records_v3', JSON.stringify(merged));
@@ -331,7 +382,8 @@ class GlobalMockDataStoreImpl implements IDataStore {
     return false;
   }
 
-  private saveToStorage(): void {
+  public saveToStorage(options?: { domain?: 'all' | 'ledger' | 'ledger_and_master' | 'master' | 'planner' | 'none' }): void {
+    const domain = options?.domain || 'all';
     const userEmail = auth.currentUser?.email;
     const role = getUserRole(userEmail);
 
@@ -344,14 +396,65 @@ class GlobalMockDataStoreImpl implements IDataStore {
     }
 
     // 2. Primary WRITE to Firestore (OWNER ONLY)
-    if (role === 'owner') {
-      saveAllToFirestoreFromAppData(this.data)
+    if (role === 'owner' && domain !== 'none') {
+      const syncPromise = (async () => {
+        if (domain === 'ledger') {
+          const ledgerData = {
+            transactions: this.data.otherSettings?.transactions || [],
+            activeCsvSession: this.data.otherSettings?.activeCsvSession,
+          };
+          await saveLedgerToFirestore(ledgerData);
+        } else if (domain === 'ledger_and_master') {
+          const ledgerData = {
+            transactions: this.data.otherSettings?.transactions || [],
+            activeCsvSession: this.data.otherSettings?.activeCsvSession,
+          };
+          const masterData: MasterData = {
+            userInfo: this.data.userInfo,
+            assets: this.data.assets,
+            debts: this.data.debts,
+            monthlyIncome: this.data.monthlyIncome,
+            fixedExpenses: this.data.fixedExpenses,
+            financialProducts: this.data.financialProducts,
+            businessInfo: this.data.businessInfo,
+            rules: this.data.rules,
+          };
+          await Promise.all([
+            saveLedgerToFirestore(ledgerData),
+            saveMasterToFirestore(masterData),
+          ]);
+        } else if (domain === 'master') {
+          const masterData: MasterData = {
+            userInfo: this.data.userInfo,
+            assets: this.data.assets,
+            debts: this.data.debts,
+            monthlyIncome: this.data.monthlyIncome,
+            fixedExpenses: this.data.fixedExpenses,
+            financialProducts: this.data.financialProducts,
+            businessInfo: this.data.businessInfo,
+            rules: this.data.rules,
+          };
+          await saveMasterToFirestore(masterData);
+        } else if (domain === 'planner') {
+          const plannerData = {
+            goals: this.data.goals?.mainGoals || [],
+            onboardingGoals: this.data.goals?.onboardingGoals || [],
+            schedules: this.data.otherSettings?.schedules || [],
+          };
+          await savePlannerToFirestore(plannerData);
+        } else {
+          // 'all'
+          await saveAllToFirestoreFromAppData(this.data);
+        }
+      })();
+
+      syncPromise
         .then(() => {
           this.lastFirestoreSaveTime = new Date().toISOString();
           this.lastFirestoreError = null;
         })
         .catch((err: any) => {
-          const msg = `Firestore Primary WRITE 저장 실패: ${err?.message || '네트워크/권한 오류'}`;
+          const msg = `Firestore Primary WRITE 저장 실패 (${domain}): ${err?.message || '네트워크/권한 오류'}`;
           console.error(msg, err);
           this.lastFirestoreError = msg;
           this.notifyErrorListeners(msg);
@@ -932,7 +1035,8 @@ class GlobalMockDataStoreImpl implements IDataStore {
       isActive: true,
     };
 
-    await this.saveMerchantRule(userRule);
+    // Defer intermediate saveToStorage to prevent multiple full AppData write fan-outs
+    await this.saveMerchantRule(userRule, true);
 
     // Reclassify active session transactions using updated rules
     if (this.data.otherSettings.transactions.length > 0) {
@@ -955,20 +1059,22 @@ class GlobalMockDataStoreImpl implements IDataStore {
       });
 
       this.data.otherSettings.transactions = updatedTxList;
-      this.saveToStorage();
     }
+
+    // Single consolidated save for both rule update & transaction reclassification
+    this.saveToStorage({ domain: 'ledger_and_master' });
   }
 
   public async addTransaction(tx: Transaction): Promise<void> {
     this.data.otherSettings.transactions.unshift(tx);
-    this.saveToStorage();
+    this.saveToStorage({ domain: 'ledger' });
   }
 
   public async updateTransaction(tx: Transaction): Promise<void> {
     const idx = this.data.otherSettings.transactions.findIndex((t) => t.id === tx.id);
     if (idx >= 0) {
       this.data.otherSettings.transactions[idx] = tx;
-      this.saveToStorage();
+      this.saveToStorage({ domain: 'ledger' });
     }
   }
 
@@ -976,12 +1082,12 @@ class GlobalMockDataStoreImpl implements IDataStore {
     this.data.otherSettings.transactions = this.data.otherSettings.transactions.filter(
       (t) => t.id !== id
     );
-    this.saveToStorage();
+    this.saveToStorage({ domain: 'ledger' });
   }
 
   public async addSchedule(sch: ScheduleEvent): Promise<void> {
     this.data.otherSettings.schedules.unshift(sch);
-    this.saveToStorage();
+    this.saveToStorage({ domain: 'planner' });
   }
 
   public async updateSchedule(sch: ScheduleEvent): Promise<void> {
@@ -992,10 +1098,10 @@ class GlobalMockDataStoreImpl implements IDataStore {
     } else {
       list.unshift(sch);
     }
-    this.saveToStorage();
+    this.saveToStorage({ domain: 'planner' });
   }
 
-  public async saveMerchantRule(rule: MerchantRule): Promise<void> {
+  public async saveMerchantRule(rule: MerchantRule, skipSave: boolean = false): Promise<void> {
     if (!this.data.rules) {
       this.data.rules = {
         merchantRules: [...INITIAL_MERCHANT_RULES],
@@ -1009,10 +1115,12 @@ class GlobalMockDataStoreImpl implements IDataStore {
     } else {
       this.data.rules.merchantRules.unshift(rule);
     }
-    this.saveToStorage();
+    if (!skipSave) {
+      this.saveToStorage({ domain: 'master' });
+    }
   }
 
-  public async saveCategoryRule(rule: CategoryRule): Promise<void> {
+  public async saveCategoryRule(rule: CategoryRule, skipSave: boolean = false): Promise<void> {
     if (!this.data.rules) {
       this.data.rules = {
         merchantRules: [...INITIAL_MERCHANT_RULES],
@@ -1026,10 +1134,12 @@ class GlobalMockDataStoreImpl implements IDataStore {
     } else {
       this.data.rules.categoryRules.unshift(rule);
     }
-    this.saveToStorage();
+    if (!skipSave) {
+      this.saveToStorage({ domain: 'master' });
+    }
   }
 
-  public async saveExclusionRule(rule: ExclusionRule): Promise<void> {
+  public async saveExclusionRule(rule: ExclusionRule, skipSave: boolean = false): Promise<void> {
     if (!this.data.rules) {
       this.data.rules = {
         merchantRules: [...INITIAL_MERCHANT_RULES],
@@ -1043,7 +1153,9 @@ class GlobalMockDataStoreImpl implements IDataStore {
     } else {
       this.data.rules.exclusionRules.unshift(rule);
     }
-    this.saveToStorage();
+    if (!skipSave) {
+      this.saveToStorage({ domain: 'master' });
+    }
   }
 
   // ============================================================================
@@ -1400,7 +1512,7 @@ class GlobalMockDataStoreImpl implements IDataStore {
       { id: 'interest', name: '금융비용 (대출이자)', category: '금융비용', amount: financialCost },
       { id: 'principal', name: '대출 원금상환액', category: '부채상환', amount: principalRepayment },
       ...(totalSavings > 0 ? [{ id: 'savings', name: '저축·투자 (자산증가)', category: '저축/투자', amount: totalSavings }] : []),
-      ...fixedExps.map((f) => ({
+      ...(fixedExps || []).map((f) => ({
         id: f.id,
         name: f.name,
         category: f.category || '고정지출',
@@ -2122,9 +2234,9 @@ export interface IDataStore {
   addSchedule(sch: ScheduleEvent): Promise<void>;
   updateSchedule(sch: ScheduleEvent): Promise<void>;
 
-  saveMerchantRule(rule: MerchantRule): Promise<void>;
-  saveCategoryRule(rule: CategoryRule): Promise<void>;
-  saveExclusionRule(rule: ExclusionRule): Promise<void>;
+  saveMerchantRule(rule: MerchantRule, skipSave?: boolean): Promise<void>;
+  saveCategoryRule(rule: CategoryRule, skipSave?: boolean): Promise<void>;
+  saveExclusionRule(rule: ExclusionRule, skipSave?: boolean): Promise<void>;
 
   // Snapshot Repository & Selector Methods (Phase 2-A)
   getOpeningSnapshotStatus(month: string): 'confirmed' | 'draft' | 'none';
@@ -2150,6 +2262,6 @@ export interface IDataStore {
   updateConfirmedOpeningSnapshot(payload: any): MonthlySnapshot & { assets: AssetSnapshot[]; debts: DebtSnapshot[] };
 
   // Subscription for Real-time Reactive UI updates
-
+  saveToStorage(options?: { domain?: 'all' | 'ledger' | 'ledger_and_master' | 'master' | 'planner' | 'none' }): void;
   subscribe(listener: (data: AppData) => void): () => void;
 }

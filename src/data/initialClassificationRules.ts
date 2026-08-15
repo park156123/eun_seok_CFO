@@ -5,16 +5,7 @@ import {
   INITIAL_JSON_EXCLUSION_RULES,
 } from './ruleLoader';
 
-export const CONSUMER_CATEGORIES: Record<string, string[]> = {
-  '식비': ['외식', '장보기', '편의점', '카페', '배달'],
-  '생활': ['생활용품', '주거관리'],
-  '가족': ['배우자 생활비', '교육비', '육아', '경조사'],
-  '건강': ['병원·약국', '운동'],
-  '이동': ['교통', '차량유지'],
-  '통신': ['통신비'],
-  '보험': ['아이보험', '본인보험', '운전자보험'],
-  '기타': ['기부', '기타지출'],
-};
+export { CONSUMER_CATEGORIES } from './consumerCategories';
 
 export const EXCLUSION_REASONS: { code: ExclusionReasonCode; label: string; description: string }[] = [
   { code: 'internal_transfer', label: '내부이체', description: '본인/가족 계좌 간 이동' },

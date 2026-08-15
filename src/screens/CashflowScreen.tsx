@@ -170,16 +170,16 @@ export const CashflowScreen: React.FC<CashflowScreenProps> = ({ onNavigate }) =>
           <section className="space-y-3">
             <h3 className="font-dohyeon text-base text-[#006c49] flex items-center gap-2 px-1">
               <span className="material-symbols-outlined text-lg">arrow_downward</span>
-              유입 상세 ({cashflow.inflowDetails.length}건)
+              유입 상세 ({(cashflow?.inflowDetails || []).length}건)
             </h3>
 
             <div className="bg-white rounded-2xl p-4 shadow-xs border border-[#c5c5d3]/20 space-y-3">
-              {cashflow.inflowDetails.length === 0 ? (
+              {(cashflow?.inflowDetails || []).length === 0 ? (
                 <p className="text-center text-[#757682] text-xs py-2">
                   등록된 수입원이 없습니다. (0원)
                 </p>
               ) : (
-                cashflow.inflowDetails.map((item) => (
+                (cashflow?.inflowDetails || []).map((item) => (
                   <div
                     key={item.id}
                     className="flex justify-between items-center text-sm py-1 border-b border-[#c5c5d3]/10 last:border-0"
@@ -213,16 +213,16 @@ export const CashflowScreen: React.FC<CashflowScreenProps> = ({ onNavigate }) =>
           <section className="space-y-3">
             <h3 className="font-dohyeon text-base text-[#ba1a1a] flex items-center gap-2 px-1">
               <span className="material-symbols-outlined text-lg">arrow_upward</span>
-              유출 상세 ({cashflow.outflowDetails.length}건)
+              유출 상세 ({(cashflow?.outflowDetails || []).length}건)
             </h3>
 
             <div className="bg-white rounded-2xl p-4 shadow-xs border border-[#c5c5d3]/20 space-y-3">
-              {cashflow.outflowDetails.length === 0 ? (
+              {(cashflow?.outflowDetails || []).length === 0 ? (
                 <p className="text-center text-[#757682] text-xs py-2">
                   등록된 지출 내역이 없습니다. (0원)
                 </p>
               ) : (
-                cashflow.outflowDetails.map((exp) => (
+                (cashflow?.outflowDetails || []).map((exp) => (
                   <div
                     key={exp.id}
                     className="flex justify-between items-center text-sm py-1 border-b border-[#c5c5d3]/10 last:border-0"

@@ -72,6 +72,12 @@ export const ensureHouseholdDocExists = async (userEmail: string): Promise<void>
     const docRef = doc(db, 'households', HOUSEHOLD_ID);
     const snap = await getDoc(docRef);
 
+    // If household doc already exists in Firestore, DO NOT execute setDoc (READ 1, WRITE 0)
+    if (snap.exists()) {
+      return;
+    }
+
+    // Only create when household doc is missing (새 household 생성 시에만 setDoc 실행)
     const members: HouseholdMember[] = ALLOWED_EMAILS.map((email) => ({
       email: email.toLowerCase(),
       role: email.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase() ? 'owner' : 'viewer',

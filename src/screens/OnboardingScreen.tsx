@@ -2550,9 +2550,9 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                     </div>
 
                     {/* Validation warning/error badges */}
-                    {!phaseValidation.isValid && phaseValidation.errors.length > 0 && (
+                    {!phaseValidation?.isValid && (phaseValidation?.errors || []).length > 0 && (
                       <div className="bg-red-50 text-red-700 p-2.5 rounded-xl border border-red-200 text-[11px] space-y-1">
-                        {phaseValidation.errors.map((err, idx) => (
+                        {(phaseValidation?.errors || []).map((err, idx) => (
                           <div key={idx} className="flex items-center gap-1">
                             <span className="material-symbols-outlined text-xs">error</span>
                             <span>{err}</span>
@@ -2560,9 +2560,9 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                         ))}
                       </div>
                     )}
-                    {phaseValidation.warnings.length > 0 && (
+                    {(phaseValidation?.warnings || []).length > 0 && (
                       <div className="bg-amber-50 text-amber-800 p-2.5 rounded-xl border border-amber-200 text-[11px] space-y-1">
-                        {phaseValidation.warnings.map((warn, idx) => (
+                        {(phaseValidation?.warnings || []).map((warn, idx) => (
                           <div key={idx} className="flex items-center gap-1">
                             <span className="material-symbols-outlined text-xs">warning</span>
                             <span>{warn}</span>
@@ -2572,13 +2572,13 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                     )}
 
                     {/* Active Phases List */}
-                    {debtForm.repaymentPhases.length === 0 ? (
+                    {(debtForm?.repaymentPhases || []).length === 0 ? (
                       <div className="text-[11px] text-[#757682] bg-white p-3 rounded-xl border border-dashed border-[#c5c5d3]/60 text-center">
                         등록된 상환 단계가 없습니다. 상단 샘플 버튼이나 '+ 단계 추가'로 등록해 보세요.
                       </div>
                     ) : (
                       <div className="space-y-2.5">
-                        {debtForm.repaymentPhases.map((phase, idx) => (
+                        {(debtForm?.repaymentPhases || []).map((phase, idx) => (
                           <div
                             key={phase.id || idx}
                             className="bg-white p-3 rounded-xl border border-[#c5c5d3]/40 space-y-2 text-xs"

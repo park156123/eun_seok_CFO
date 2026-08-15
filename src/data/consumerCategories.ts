@@ -47,6 +47,7 @@ export const CONSUMER_CATEGORY_GROUPS: ConsumerCategoryGroup[] = [
       { name: '교육비', code: 'education' },
       { name: '육아', code: 'childcare' },
       { name: '경조사', code: 'family_events' },
+      { name: '여가문화', code: 'leisure_culture' },
     ],
   },
   {
@@ -101,6 +102,14 @@ export const CONSUMER_CATEGORY_GROUPS: ConsumerCategoryGroup[] = [
     ],
   },
 ];
+
+export const CONSUMER_CATEGORIES: Record<string, string[]> = CONSUMER_CATEGORY_GROUPS.reduce(
+  (acc, group) => {
+    acc[group.name] = group.subCategories.map((sub) => sub.name);
+    return acc;
+  },
+  {} as Record<string, string[]>
+);
 
 export function getCategoryGroup(majorCategoryStr: string): ConsumerCategoryGroup {
   const theme = getCategoryTheme(majorCategoryStr);

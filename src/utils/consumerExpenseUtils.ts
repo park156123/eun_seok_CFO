@@ -3,15 +3,50 @@ import { parseCategoryString, getCategoryGroup, ConsumerCategoryGroup } from '..
 import { formatSummaryAmountKRW } from './amountUtils';
 
 /**
+ * Tax & Public Charges Transaction Filter.
+ */
+export function isTaxTransaction(t: Transaction): boolean {
+  if (!t || t.isIncome || t.isDuplicate) return false;
+  const amount = Number(t.amount);
+  if (isNaN(amount) || amount <= 0) return false;
+
+  const isUserConfirmedTax =
+    (t.userConfirmed === true || t.classification?.userConfirmed === true) &&
+    (t.classification?.classificationType === 'tax' ||
+      t.classification?.majorCategory === '세금·공과' ||
+      t.classification?.majorCategory === '세금_공과');
+
+  if (t.analysisStatus === 'excluded' && !isUserConfirmedTax) return false;
+
+  if (t.classification) {
+    if (t.classification.classificationType === 'tax') return true;
+    if (t.classification.majorCategory === '세금·공과' || t.classification.majorCategory === '세금_공과') return true;
+  }
+  const categoryStr = (t.category || '').trim();
+  if (
+    categoryStr === '세금·공과' ||
+    categoryStr === '세금_공과' ||
+    categoryStr.startsWith('세금·공과') ||
+    categoryStr.startsWith('세금_공과')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Unified Common Consumer Transaction Filter.
  * Strictly adheres to requirement 7:
  * - valid numeric positive amount
  * - not income, not duplicate
- * - not excluded by analysisStatus
- * - excludes: internal transfer, business transaction, debt principal repayment, asset movement, financial cost, unknown.
+ * - not excluded by analysisStatus (unless explicitly user-confirmed as consumer)
+ * - excludes: internal transfer, business transaction, debt principal repayment, asset movement, financial cost, unknown, tax & public charges.
  */
 export function isConsumerTransaction(t: Transaction): boolean {
   if (!t) return false;
+
+  // 0. Exclude tax & public charges
+  if (isTaxTransaction(t)) return false;
 
   // 1. Exclude income
   if (t.isIncome) return false;
@@ -23,8 +58,15 @@ export function isConsumerTransaction(t: Transaction): boolean {
   // 3. Exclude duplicate rows
   if (t.isDuplicate) return false;
 
-  // 4. Exclude by analysisStatus
-  if (t.analysisStatus === 'excluded') return false;
+  // 4. Exclude by analysisStatus (unless user-confirmed as consumer)
+  const isUserConfirmedConsumer =
+    (t.userConfirmed === true || t.classification?.userConfirmed === true) &&
+    t.classification?.classificationType === 'consumer' &&
+    t.classification?.included !== false;
+
+  if (t.analysisStatus === 'excluded' && !isUserConfirmedConsumer) {
+    return false;
+  }
 
   // 5. Check classification object
   if (t.classification) {

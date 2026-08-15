@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ScreenId, Transaction } from '../types';
 import { GlobalMockDataStore } from '../services/dataStore';
-import { useSelectedMonth } from '../context/SelectedMonthContext';
+import { useSelectedMonth, getPrevMonth } from '../context/SelectedMonthContext';
 import { MonthSelector } from '../components/MonthSelector';
 import { formatSummaryAmountKRW } from '../utils/amountUtils';
 import { getSubCategoryIcon } from '../utils/categoryTheme';
@@ -9,8 +9,13 @@ import {
   getConsumerSubcategoryBreakdown,
   getConsumerTopMerchants,
   calculateConsumerInsights,
-  generateCfoComment,
 } from '../utils/consumerExpenseUtils';
+import {
+  buildCfoAnalysisInput,
+  getCachedAnalysisResult,
+  requestCfoMonthlyAnalysis,
+  CfoAnalysisResult,
+} from '../services/cfoAnalysisService';
 import {
   getTransactionsForMonth,
   getExpenseSummaryForMonth,
@@ -36,6 +41,11 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
   const [showIncomeBreakdown, setShowIncomeBreakdown] = useState<boolean>(false);
   const [showOutflowBreakdown, setShowOutflowBreakdown] = useState<boolean>(false);
 
+  // AI Analysis state (button-triggered & cached)
+  const [aiAnalysis, setAiAnalysis] = useState<CfoAnalysisResult | null>(null);
+  const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -44,8 +54,33 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
     });
   }, []);
 
+  // Check cached analysis when selectedMonth changes (without making any network call)
+  useEffect(() => {
+    const input = buildCfoAnalysisInput(selectedMonth);
+    const cached = getCachedAnalysisResult(selectedMonth, input);
+    setAiAnalysis(cached);
+    setAiError(null);
+  }, [selectedMonth]);
+
+  const handleRunAiAnalysis = useCallback(async () => {
+    setIsAiLoading(true);
+    setAiError(null);
+    try {
+      const input = buildCfoAnalysisInput(selectedMonth);
+      const res = await requestCfoMonthlyAnalysis(input);
+      setAiAnalysis(res);
+    } catch (err: any) {
+      console.error('Ledger AI Analysis failed:', err);
+      setAiError('AI 분석을 불러오지 못했습니다. 다시 시도해 주세요.');
+    } finally {
+      setIsAiLoading(false);
+    }
+  }, [selectedMonth]);
+
   // Filter transactions strictly by selected month using central selector
   const selectedMonthTxs = getTransactionsForMonth(selectedMonth);
+  const prevMonthKey = getPrevMonth(normalizeMonthKey(selectedMonth).yyyyMm);
+  const prevMonthTxs = getTransactionsForMonth(prevMonthKey);
   const summary = getExpenseSummaryForMonth(selectedMonth);
   const categoryList = getCategorySummaryForMonth(selectedMonth);
   const settlementSummary = getMonthlySettlementSummary(selectedMonth);
@@ -104,11 +139,8 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
 
   const incomeItems = getIncomeItemsForMonth();
 
-  // Calculate Insights strictly for selected month transactions
-  const insights = calculateConsumerInsights(selectedMonthTxs);
-  const cfoComment = selectedMonthTxs.length > 0
-    ? generateCfoComment(selectedMonthTxs)
-    : `${formattedSelectedMonth} 소비 데이터가 업로드되면 AI CFO가 소비 습관 분석 및 1줄 총평을 제공합니다.`;
+  // Calculate Insights strictly for selected month & previous month transactions
+  const insights = calculateConsumerInsights(selectedMonthTxs, prevMonthTxs);
 
   return (
     <div className="space-y-5 pb-28">
@@ -303,6 +335,17 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
                       {settlementSummary.totalSavings.toLocaleString()}원
                     </span>
                   </div>
+                  {settlementSummary.taxAndPublicCharges > 0 && (
+                    <div className="flex justify-between items-center pl-2">
+                      <span className="text-[#444651] font-medium flex items-center gap-1">
+                        <span className="w-1 h-1 rounded-full bg-[#854d0e]" />
+                        세금·공과
+                      </span>
+                      <span className="font-semibold text-[#854d0e]">
+                        {settlementSummary.taxAndPublicCharges.toLocaleString()}원
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -688,17 +731,57 @@ export const LedgerMainScreen: React.FC<LedgerMainScreenProps> = ({
         )}
       </section>
 
-      {/* 6. AI CFO 한줄 코멘트 (AI CFO One-Line Comment Card) */}
-      <section className="bg-gradient-to-r from-[#00236f]/5 to-[#6ffbbe]/10 p-4 rounded-2xl border border-[#00236f]/20 shadow-xs space-y-2">
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-lg bg-[#00236f] text-[#6ffbbe] flex items-center justify-center shrink-0">
-            <span className="material-symbols-outlined text-sm">smart_toy</span>
+      {/* 6. AI CFO 한줄 코멘트 (AI CFO One-Line Spending Insight Card) */}
+      <section className="bg-gradient-to-r from-[#00236f]/5 to-[#6ffbbe]/10 p-4 rounded-2xl border border-[#00236f]/20 shadow-xs space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-[#00236f] text-[#6ffbbe] flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-base">smart_toy</span>
+            </div>
+            <div>
+              <span className="font-dohyeon text-sm text-[#00236f] block">AI CFO 한줄 코멘트</span>
+              <span className="text-[10px] text-[#757682]">
+                {aiAnalysis ? '실시간 맞춤 분석 완료' : `${formattedSelectedMonth} 소비 패턴 AI 해석`}
+              </span>
+            </div>
           </div>
-          <span className="font-dohyeon text-sm text-[#00236f]">AI CFO 한줄 코멘트</span>
+
+          <button
+            type="button"
+            onClick={handleRunAiAnalysis}
+            disabled={isAiLoading}
+            className="px-3 py-1.5 bg-[#00236f] hover:bg-[#1e3a8a] text-[#6ffbbe] hover:text-white text-xs font-dohyeon rounded-xl transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95 disabled:opacity-50"
+          >
+            <span className={`material-symbols-outlined text-sm ${isAiLoading ? 'animate-spin' : ''}`}>
+              {isAiLoading ? 'sync' : 'auto_awesome'}
+            </span>
+            {isAiLoading ? '분석 중...' : (aiAnalysis ? '다시 분석하기' : 'AI 분석하기')}
+          </button>
         </div>
-        <p className="text-xs text-[#191c1e] font-medium leading-relaxed pl-8">
-          {cfoComment}
-        </p>
+
+        {aiError && (
+          <div className="bg-[#fff1f2] p-2.5 rounded-xl border border-[#fecdd3] text-xs text-[#be123c] flex items-center gap-1.5">
+            <span className="material-symbols-outlined text-sm">error</span>
+            <span>{aiError}</span>
+          </div>
+        )}
+
+        <div className="bg-white/80 p-3.5 rounded-xl border border-white/60 text-xs text-[#191c1e] font-medium leading-relaxed shadow-2xs">
+          {isAiLoading ? (
+            <div className="flex items-center gap-2 text-[#757682] py-1">
+              <span className="material-symbols-outlined text-sm animate-spin text-[#00236f]">progress_activity</span>
+              <span>가족의 재무 및 소비 패턴을 종합 분석하는 중입니다...</span>
+            </div>
+          ) : aiAnalysis ? (
+            <p className="text-[#00236f] font-semibold">
+              {aiAnalysis.spendingInsight}
+            </p>
+          ) : (
+            <p className="text-[#555770]">
+              우측 상단의 <strong className="text-[#00236f]">[AI 분석하기]</strong> 버튼을 누르면 인공지능 CFO가 {formattedSelectedMonth} 소비 지출 패턴과 재무 관계를 해석해 드립니다.
+            </p>
+          )}
+        </div>
       </section>
 
       {/* FAB: Add Entry */}

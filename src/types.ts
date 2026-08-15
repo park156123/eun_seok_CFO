@@ -405,7 +405,7 @@ export interface ClassificationResult {
   merchantOriginal: string; // 원본 거래처명 (절대 변경 안 됨)
   merchantNormalized: string; // 정규화된 거래처명
   merchantMaster?: string | null; // 대표 거래처명
-  classificationType: 'consumer' | 'excluded'; // 1차 분류
+  classificationType: 'consumer' | 'excluded' | 'tax'; // 1차 분류
   majorCategory: string | null;
   minorCategory: string | null;
   exclusionReason: ExclusionReasonCode | null;

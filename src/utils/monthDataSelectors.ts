@@ -1,6 +1,6 @@
 import { Transaction, ActiveCsvSession } from '../types';
 import { GlobalMockDataStore, ConsumerSpendingSummary } from '../services/dataStore';
-import { isConsumerTransaction } from './consumerExpenseUtils';
+import { isConsumerTransaction, isTaxTransaction } from './consumerExpenseUtils';
 import { getCategoryGroup } from '../data/consumerCategories';
 import { calculateMonthFinancialCost } from './financialCostCalculator';
 import { SnapshotService } from '../services/snapshotService';
@@ -137,6 +137,7 @@ export interface MonthlySettlementSummaryResult {
 
   financialCost: number;         // 금융비용
   totalSavings: number;          // 저축/투자
+  taxAndPublicCharges: number;   // 세금/공과
   netCashflow: number;           // 순현금흐름
 }
 
@@ -185,19 +186,27 @@ export function getMonthlySettlementSummary(selectedMonthInput: string): Monthly
       debtPrincipal: 0,
       financialCost: 0,
       totalSavings: 0,
+      taxAndPublicCharges: 0,
       netCashflow: 0,
     };
   }
 
   const isLockedSettlement = currentRecord.status === '결산잠금' || currentRecord.status === '완료';
 
-  // 1. Total Income: use stored confirmed totalIncome if available when locked
-  const totalIncome = (isLockedSettlement && currentRecord.totalIncome !== undefined && currentRecord.totalIncome !== null)
+  const incomeSum = (currentRecord.incomes || []).reduce(
+    (sum: number, inc: any) => sum + (Number(inc.amount) || 0),
+    0
+  );
+
+  const hasLegacyIncomeMismatch =
+    currentRecord.totalIncome === 0 &&
+    (currentRecord.incomes || []).length > 0 &&
+    incomeSum > 0;
+
+  // 1. Total Income: use stored confirmed totalIncome if available when locked, unless legacy mismatch
+  const totalIncome = (isLockedSettlement && currentRecord.totalIncome !== undefined && currentRecord.totalIncome !== null && !hasLegacyIncomeMismatch)
     ? Number(currentRecord.totalIncome)
-    : (currentRecord.incomes || []).reduce(
-        (sum: number, inc: any) => sum + (Number(inc.amount) || 0),
-        0
-      );
+    : incomeSum;
 
   // 2. Total Savings: use stored confirmed totalSavings if available when locked
   const totalSavings = (isLockedSettlement && currentRecord.totalSavings !== undefined && currentRecord.totalSavings !== null)
@@ -256,13 +265,20 @@ export function getMonthlySettlementSummary(selectedMonthInput: string): Monthly
     ? Number(currentRecord.principalRepayment ?? currentRecord.debtPrincipalRepayment)
     : calculatedDebtPrincipal;
 
+  // 5.5 Tax & Public Charges
+  const taxTransactions = (currentRecord.transactions || []).filter(isTaxTransaction);
+  const calculatedTaxAndPublicCharges = taxTransactions.reduce((s: number, t: any) => s + (Number(t.amount) || 0), 0);
+  const taxAndPublicCharges = (isLockedSettlement && currentRecord.taxAndPublicCharges !== undefined && currentRecord.taxAndPublicCharges !== null)
+    ? Number(currentRecord.taxAndPublicCharges)
+    : calculatedTaxAndPublicCharges;
+
   // 6. Total Cash Outflow: use stored confirmed totalCashOutflow if available when locked
   const totalOutflow = (isLockedSettlement && currentRecord.totalCashOutflow !== undefined && currentRecord.totalCashOutflow !== null)
     ? Number(currentRecord.totalCashOutflow)
-    : (livingExpense + financialCost + debtPrincipal + totalSavings);
+    : (livingExpense + financialCost + debtPrincipal + totalSavings + taxAndPublicCharges);
 
-  // 7. Net Cash Flow: use stored confirmed netCashFlow if available when locked
-  const netCashflow = (isLockedSettlement && currentRecord.netCashFlow !== undefined && currentRecord.netCashFlow !== null)
+  // 7. Net Cash Flow: use stored confirmed netCashFlow if available when locked, unless legacy mismatch
+  const netCashflow = (isLockedSettlement && currentRecord.netCashFlow !== undefined && currentRecord.netCashFlow !== null && !hasLegacyIncomeMismatch)
     ? Number(currentRecord.netCashFlow)
     : (totalIncome - totalOutflow);
 
@@ -286,6 +302,7 @@ export function getMonthlySettlementSummary(selectedMonthInput: string): Monthly
     debtPrincipal,
     financialCost,
     totalSavings,
+    taxAndPublicCharges,
     netCashflow,
   };
 }
@@ -320,6 +337,18 @@ export function getTransactionsForMonth(selectedMonthStr: string): Transaction[]
       if (!seenIds.has(txId)) {
         seenIds.add(txId);
         results.push(tx);
+      } else {
+        const idx = results.findIndex(
+          (r) => (r.id || r.transactionId || `${r.date}_${r.amount}_${r.merchant}`) === txId
+        );
+        if (idx >= 0) {
+          if (
+            tx.userConfirmed ||
+            (tx.category && tx.category !== results[idx].category)
+          ) {
+            results[idx] = { ...results[idx], ...tx };
+          }
+        }
       }
     });
   }
@@ -533,7 +562,7 @@ export function getExpenseSummaryForMonth(selectedMonthStr: string): ExpenseSumm
  */
 export function getCategorySummaryForMonth(selectedMonthStr: string) {
   const summary = getExpenseSummaryForMonth(selectedMonthStr);
-  return summary.categoryBreakdown.map((item) => ({
+  return (summary?.categoryBreakdown || []).map((item) => ({
     ...item,
     group: getCategoryGroup(item.category),
   }));
