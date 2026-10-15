@@ -121,6 +121,81 @@ export function getMonthlyRecordForMonth(monthInput: string): any {
   return null;
 }
 
+/**
+ * 부채 스냅샷의 예정 원금상환이 이미 당월 확정 CSV 원금상환 거래에 포함되어 있는지 검증하는 함수.
+ * 동일 부채에 대한 CSV 실상환 내역이 존재하면 스냅샷 예정 상환액의 중복 합산을 방지(deduplication).
+ */
+export function isSnapshotDebtCoveredByCsv(
+  debtSnapshot: {
+    debtNameSnapshot?: string;
+    creditorNameSnapshot?: string;
+    debtId?: string | null;
+    linkedDebtId?: string | null;
+    id?: string;
+  },
+  csvDebtTxs: any[]
+): boolean {
+  if (!csvDebtTxs || csvDebtTxs.length === 0) return false;
+
+  const cleanText = (s?: string | null) =>
+    s ? String(s).replace(/[^a-zA-Z0-9가-힣]/g, '').toLowerCase() : '';
+
+  const snapDebtName = cleanText(debtSnapshot.debtNameSnapshot);
+  const snapCreditor = cleanText(debtSnapshot.creditorNameSnapshot);
+  const snapDebtId = debtSnapshot.debtId || debtSnapshot.linkedDebtId || debtSnapshot.id;
+
+  return csvDebtTxs.some((tx) => {
+    // 1. 명시적 ID 매칭 (트랜잭션에 debtId 또는 appliedRuleId가 지정된 경우)
+    if (
+      snapDebtId &&
+      (tx.debtId === snapDebtId ||
+        tx.classification?.debtId === snapDebtId ||
+        tx.classification?.appliedRuleId === snapDebtId)
+    ) {
+      return true;
+    }
+
+    // 2. 거래처명 / 원본명 / 적요 / 카테고리 텍스트 기반 매칭
+    const txMerchant = cleanText(tx.merchant);
+    const txOriginal = cleanText(tx.merchantOriginal);
+    const txMemo = cleanText(tx.memo);
+    const txCategory = cleanText(tx.category);
+    const combinedTxText = `${txMerchant} ${txOriginal} ${txMemo} ${txCategory}`;
+
+    // 부채명이 충분히 구체적인 경우 (2글자 이상)
+    if (snapDebtName && snapDebtName.length >= 2) {
+      if (
+        combinedTxText.includes(snapDebtName) ||
+        (txMerchant.length >= 2 && snapDebtName.includes(txMerchant))
+      ) {
+        return true;
+      }
+    }
+
+    // 부채 핵심 키워드 매칭 (예: '금강 담보대출' -> '금강', '현하우스 대출' -> '현하우스')
+    const coreDebtName = snapDebtName.replace(/(담보대출|신용대출|대출|차입금|원리금|원금|상환)/g, '');
+    if (coreDebtName && coreDebtName.length >= 2) {
+      if (combinedTxText.includes(coreDebtName)) {
+        return true;
+      }
+    }
+
+    // 금융기관(채권자)명과 부채명 키워드가 함께 매칭되는 경우
+    if (
+      snapCreditor &&
+      snapCreditor.length >= 2 &&
+      snapDebtName &&
+      snapDebtName.length >= 2
+    ) {
+      if (combinedTxText.includes(snapCreditor) && combinedTxText.includes(snapDebtName)) {
+        return true;
+      }
+    }
+
+    return false;
+  });
+}
+
 export interface MonthlySettlementSummaryResult {
   monthKey: string;              // '2026-04'
   formattedSelectedMonth: string;// '2026년 4월'
@@ -256,8 +331,10 @@ export function getMonthlySettlementSummary(selectedMonthInput: string): Monthly
   const csvDebtPrincipalSum = csvDebtPrincipalTxs.reduce((s: number, t: any) => s + (Number(t.amount) || 0), 0);
 
   const snapshotDebtsForMonth = SnapshotService.getDebtSnapshotsByMonth(monthKey).filter((d) => d.isIncluded !== false);
-  const snapshotScheduledItems = (hasConfirmedOpeningForMonth ? snapshotDebtsForMonth : [])
-    .filter((d) => (Number(d.scheduledPrincipalRepayment) || 0) > 0);
+  const hasDebtsAvailable = hasConfirmedOpeningForMonth || snapshotDebtsForMonth.length > 0;
+  const snapshotScheduledItems = (hasDebtsAvailable ? snapshotDebtsForMonth : [])
+    .filter((d) => (Number(d.scheduledPrincipalRepayment) || 0) > 0)
+    .filter((d) => !isSnapshotDebtCoveredByCsv(d, csvDebtPrincipalTxs));
   const snapshotScheduledSum = snapshotScheduledItems.reduce((s: number, d: any) => s + (Number(d.scheduledPrincipalRepayment) || 0), 0);
 
   const calculatedDebtPrincipal = csvDebtPrincipalSum + snapshotScheduledSum;

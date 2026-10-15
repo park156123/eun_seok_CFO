@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { SettlementData, IncomeSource, IncomeRecord, ClassificationResult, ExclusionReasonCode, MerchantRule, ExclusionRule, RuleConfidence, Transaction } from '../types';
 import { GlobalMockDataStore } from '../services/dataStore';
 import { SnapshotService, formatMonthKorean } from '../services/snapshotService';
-import { normalizeMonthKey, getMonthlyRecordForMonth } from '../utils/monthDataSelectors';
+import { normalizeMonthKey, getMonthlyRecordForMonth, isSnapshotDebtCoveredByCsv } from '../utils/monthDataSelectors';
 import { resolveSpecialNotes } from '../utils/resolveSpecialNotes';
 import { saveMonthlySettlementRecordToFirestore, saveSpecialNotesToFirestore } from '../services/firestoreDataService';
 import { ActiveSessionBanner } from '../components/ActiveSessionBanner';
@@ -696,6 +696,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   const [expandedCard, setExpandedCard] = useState<'none' | 'living' | 'financial' | 'debt' | 'savings' | 'tax'>('none');
   const [selectedLivingCategory, setSelectedLivingCategory] = useState<string | null>(null);
   const [isOpeningSnapshotModalOpen, setIsOpeningSnapshotModalOpen] = useState(false);
+  const [showDebtSyncConfirm, setShowDebtSyncConfirm] = useState<boolean>(false);
 
   // AI Analysis state (button-triggered & cached)
   const [aiAnalysis, setAiAnalysis] = useState<CfoAnalysisResult | null>(null);
@@ -708,6 +709,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
     const cached = getCachedAnalysisResult(selectedMonth, input);
     setAiAnalysis(cached);
     setAiError(null);
+    setShowDebtSyncConfirm(false);
   }, [selectedMonth]);
 
   const handleRunAiAnalysis = async () => {
@@ -1672,6 +1674,7 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
         livingExpense: finalLivingExpense,
         financialCost: finalFinancialCost,
         principalRepayment: finalPrincipalRepayment,
+        debtPrincipalRepayment: finalPrincipalRepayment,
         savingsInvestment: finalSavingsInvestment,
         taxAndPublicCharges: finalTaxAndPublicCharges,
         totalCashOutflow: finalTotalCashOutflow,
@@ -1804,15 +1807,17 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
     detail: `${t.date} • ${t.category || '원금상환'}`,
   }));
 
-  const snapshotScheduledItems = (hasConfirmedOpeningForMonth ? snapshotDebtsForMonth : [])
+  const hasDebtsAvailable = hasConfirmedOpeningForMonth || snapshotDebtsForMonth.length > 0;
+  const snapshotScheduledItems = (hasDebtsAvailable ? snapshotDebtsForMonth : [])
     .filter((d) => (Number(d.scheduledPrincipalRepayment) || 0) > 0)
+    .filter((d) => !isSnapshotDebtCoveredByCsv(d, csvDebtPrincipalTxs))
     .map((d) => ({
       id: `snap-rep-${d.id}`,
       title: `${d.debtNameSnapshot || '부채'} 예정 원금상환`,
       amount: Number(d.scheduledPrincipalRepayment) || 0,
       sourceType: 'snapshot' as const,
       sourceLabel: '스냅샷 예정 상환액',
-      detail: `${d.creditorNameSnapshot || '금융기관'} • 스냅샷 설정`,
+      detail: `${d.creditorNameSnapshot || '금융기관'} • 스냅샷 설정 (실제 미상환)`,
     }));
 
   const debtPrincipalItems = [...csvDebtPrincipalItems, ...snapshotScheduledItems];
@@ -1820,6 +1825,27 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
   const debtPrincipal = (isLockedSettlement && (currentRecord.principalRepayment !== undefined || currentRecord.debtPrincipalRepayment !== undefined))
     ? Number(currentRecord.principalRepayment ?? currentRecord.debtPrincipalRepayment)
     : calculatedDebtPrincipal;
+
+  const isDebtPrincipalMismatchWithSnapshot =
+    isLockedSettlement &&
+    (currentRecord.principalRepayment !== undefined || currentRecord.debtPrincipalRepayment !== undefined) &&
+    debtPrincipal !== calculatedDebtPrincipal;
+
+  const handleApplyDebtPrincipalSync = () => {
+    setShowDebtSyncConfirm(false);
+    const diff = calculatedDebtPrincipal - debtPrincipal;
+    const newTotalOutflow = totalCashOutflow + diff;
+    const newNetCash = totalIncome - newTotalOutflow;
+
+    updateCurrentRecord((rec) => ({
+      ...rec,
+      principalRepayment: calculatedDebtPrincipal,
+      debtPrincipalRepayment: calculatedDebtPrincipal,
+      totalCashOutflow: newTotalOutflow,
+      totalOutflow: newTotalOutflow,
+      netCashFlow: newNetCash,
+    }));
+  };
 
   const taxTransactions = currentRecord.transactions.filter(isTaxTransaction);
   const calculatedTaxAndPublicCharges = taxTransactions.reduce((s, t) => s + (Number(t.amount) || 0), 0);
@@ -2503,6 +2529,62 @@ export const MonthlySettlementScreen: React.FC<MonthlySettlementScreenProps> = (
                   </div>
                   <span className="font-dohyeon text-base text-[#00236f]">{formatKRW(debtPrincipal)}원</span>
                 </div>
+
+                {isDebtPrincipalMismatchWithSnapshot && (
+                  <div className="bg-[#fff8f1] p-3.5 rounded-xl border border-[#ffddb8] text-xs text-[#824700] space-y-2">
+                    <div className="flex items-center gap-2 font-bold text-xs">
+                      <span className="material-symbols-outlined text-sm text-[#ea580c]">warning</span>
+                      <span>결산 확정 당시 저장된 원금상환액과 현재 스냅샷 산출액 간 차이가 감지되었습니다.</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[11px] bg-white/70 p-2.5 rounded-lg border border-[#ffddb8]/60">
+                      <div>
+                        <span className="text-[#757682] block">확정 저장값:</span>
+                        <strong className="text-[#191c1e]">{formatKRW(debtPrincipal)}원</strong>
+                      </div>
+                      <div>
+                        <span className="text-[#757682] block">스냅샷 포함 정상 합계:</span>
+                        <strong className="text-[#00236f]">{formatKRW(calculatedDebtPrincipal)}원</strong>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-[#824700]/90 leading-relaxed">
+                      사유: CSV 확정 상환액({formatKRW(csvDebtPrincipalItems.reduce((s, i) => s + i.amount, 0))}원) 외에
+                      스냅샷 예정 상환액({formatKRW(snapshotScheduledItems.reduce((s, i) => s + i.amount, 0))}원)이
+                      결산 확정 당시 미반영되었거나 스냅샷이 사후 등록되었습니다.
+                    </p>
+                    {!showDebtSyncConfirm ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowDebtSyncConfirm(true)}
+                        className="w-full py-2 bg-[#00236f] hover:bg-[#1e3a8a] text-white font-dohyeon text-xs rounded-lg transition-all flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined text-sm">sync</span>
+                        스냅샷 예정액 반영하여 결산 재확정 ({formatKRW(calculatedDebtPrincipal)}원)
+                      </button>
+                    ) : (
+                      <div className="bg-white p-3 rounded-lg border border-[#00236f]/30 space-y-2">
+                        <p className="font-bold text-xs text-[#00236f]">
+                          {selectedMonth} 결산의 부채상환 원금을 {formatKRW(calculatedDebtPrincipal)}원으로 갱신하고 총현금유출과 순현금흐름을 재계산하시겠습니까?
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={handleApplyDebtPrincipalSync}
+                            className="flex-1 py-1.5 bg-[#00236f] text-white text-xs font-dohyeon rounded-md hover:bg-[#1e3a8a] cursor-pointer"
+                          >
+                            확인 및 재확정
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowDebtSyncConfirm(false)}
+                            className="flex-1 py-1.5 bg-gray-100 text-[#444651] text-xs font-dohyeon rounded-md hover:bg-gray-200 cursor-pointer"
+                          >
+                            취소
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="bg-[#f0f4fd] p-3 rounded-xl border border-[#00236f]/20 text-[11px] text-[#00236f] flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
